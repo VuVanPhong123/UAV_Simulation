@@ -15,8 +15,8 @@ map:
 
 drone:
   max_battery: 100.0
-  discharge_rate_base: 0.2
-  discharge_rate_climb: 0.3
+  discharge_rate_base: 1.0
+  discharge_rate_climb: 1.2
   speed: 10.0
   battery_low_threshold: 15.0
   battery_safe_target: 80.0

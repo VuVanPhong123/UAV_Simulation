@@ -1,5 +1,4 @@
 import gymnasium as gym
-from gymnasium import spaces
 import numpy as np
 from graph_map import WaypointGraph
 from drone import Drone
@@ -19,6 +18,16 @@ class DeliveryEnv(gym.Env):
         self.avoiding = False
         self.avoid_timer = 0.0
         self.avoid_direction = 0
+        
+        # Danh sách vật cản tĩnh (tọa độ x,y)
+        self.obstacles = [
+            (200, 200), (250, 300), (300, 350), (400, 200)
+        ]
+        self.sensor_range = config['obstacle_avoidance']['sensor_range']
+        self.avoid_duration = config['obstacle_avoidance']['avoidance_duration']
+        self.altitude_boost = config['obstacle_avoidance']['altitude_boost']
+        self.turn_angle = config['obstacle_avoidance']['turn_angle']
+        
         self.reset()
     
     def reset(self, seed=None, options=None):
@@ -27,12 +36,17 @@ class DeliveryEnv(gym.Env):
         self.drone.status = "flying"
         self.drone.pos = self.graph.nodes[self.graph.start]
         self.drone.node = self.graph.start
+        self.drone.altitude = self.drone.normal_altitude
         self.path = self.graph.a_star(self.graph.start, self.graph.goal)
         self.path_index = 0
         self.charging_mode = False
         self.step_count = 0
         self.avoiding = False
         self.avoid_timer = 0.0
+        self.avoid_direction = 0
+        print(f"Reset: start {self.graph.start} -> goal {self.graph.goal}")
+        if not self.path:
+            print("Không tìm thấy đường đi ban đầu!")
         return self._get_obs(), {}
     
     def _get_obs(self):
@@ -47,26 +61,42 @@ class DeliveryEnv(gym.Env):
         }
     
     def _detect_obstacle(self):
-        if np.random.rand() < 0.005:
-            return True
+        """Kiểm tra xem có vật cản nào trong phạm vi cảm biến không"""
+        for obs in self.obstacles:
+            dx = self.drone.pos[0] - obs[0]
+            dy = self.drone.pos[1] - obs[1]
+            dist = np.hypot(dx, dy)
+            if dist < self.sensor_range:
+                return True
         return False
     
     def _handle_avoidance(self, dt):
         if not self.avoiding:
             if self._detect_obstacle():
                 self.avoiding = True
-                self.avoid_timer = self.config['obstacle_avoidance']['avoidance_duration']
+                self.avoid_timer = self.avoid_duration
+                # Ưu tiên tăng độ cao
                 if self.drone.altitude < self.drone.max_altitude - 5:
-                    self.drone.altitude = min(self.drone.max_altitude, self.drone.altitude + 10)
+                    self.drone.altitude = min(self.drone.max_altitude, self.drone.altitude + self.altitude_boost)
+                    print(f"Né tránh: tăng độ cao lên {self.drone.altitude}m")
                 else:
+                    # Rẽ trái hoặc phải (chỉ thay đổi hướng, không thay đổi vị trí trực tiếp)
                     self.avoid_direction = 1 if np.random.rand() > 0.5 else -1
+                    print(f" Né tránh: rẽ {'trái' if self.avoid_direction==-1 else 'phải'} {self.turn_angle}°")
         else:
             self.avoid_timer -= dt
             if self.avoid_timer <= 0:
                 self.avoiding = False
                 self.drone.altitude = self.drone.normal_altitude
                 self.avoid_direction = 0
+                print(" Kết thúc né tránh, quay lại đường bay bình thường")
         return self.avoiding
+    
+    def _is_out_of_bounds(self, pos):
+        max_coord = (self.graph.grid_size - 1) * self.graph.spacing
+        if pos[0] < 0 or pos[0] > max_coord or pos[1] < 0 or pos[1] > max_coord:
+            return True
+        return False
     
     def step(self, action=None):
         dt = self.time_step
@@ -80,23 +110,37 @@ class DeliveryEnv(gym.Env):
             self.drone.recharge(dt)
             self.drone.update_temperature(dt)
             if self.drone.status == "flying":
+                print(f"Sạc xong, pin {self.drone.battery:.1f}%, tiếp tục bay đến goal")
                 self.path = self.graph.a_star(self.drone.node, self.graph.goal)
                 self.path_index = 0
                 self.charging_mode = False
+                if not self.path:
+                    print("Không tìm được đường từ trạm đến goal!")
+                    terminated = True
             return self._get_obs(), 0, terminated, truncated, {}
         
+        # 3. Hard rule: pin yếu và chưa sạc
         if self.drone.battery < self.drone.low_threshold and not self.charging_mode:
             nearest = None
             best_dist = float('inf')
             for station in self.graph.charging_stations:
-                dist = self.graph.heuristic(self.drone.node, station)
-                if dist < best_dist:
-                    best_dist = dist
-                    nearest = station
+                path_to_station = self.graph.a_star(self.drone.node, station)
+                if path_to_station:
+                    dist = self.graph.heuristic(self.drone.node, station)
+                    if dist < best_dist:
+                        best_dist = dist
+                        nearest = station
             if nearest is not None:
                 self.charging_mode = True
                 self.path = self.graph.a_star(self.drone.node, nearest)
                 self.path_index = 0
+                print(f"Pin yếu ({self.drone.battery:.1f}%), bay về trạm sạc {nearest}")
+                if not self.path:
+                    print("Không tìm được đường đến trạm sạc! Tiếp tục bay đến goal.")
+                    self.charging_mode = False
+            else:
+                print(f"Pin yếu nhưng không có trạm sạc khả dụng! Tiếp tục bay.")
+        
         if self.path and self.path_index < len(self.path) - 1:
             current_node = self.path[self.path_index]
             next_node = self.path[self.path_index+1]
@@ -111,19 +155,28 @@ class DeliveryEnv(gym.Env):
                 new_x = self.drone.pos[0] + dx * ratio
                 new_y = self.drone.pos[1] + dy * ratio
                 self.drone.pos = (new_x, new_y)
+                if self._is_out_of_bounds(self.drone.pos):
+                    print("Drone bay ra ngoài bản đồ!")
+                    terminated = True
                 if np.hypot(new_x - x2, new_y - y2) < 0.5:
                     self.path_index += 1
                     self.drone.node = next_node
         else:
             if self.drone.node != self.graph.goal:
+                print("Hết path nhưng chưa đến goal!")
                 terminated = True
         
         if self.drone.node == self.graph.goal and not self.charging_mode:
             terminated = True
+            print("Giao hàng thành công!")
         
         if self.drone.status == "flying":
             climbing = (self.drone.altitude > self.drone.normal_altitude)
             self.drone.consume_battery(dt, climbing)
+        
+        if self.drone.battery <= 0:
+            terminated = True
+            print("Hết pin! Giao hàng thất bại.")
         
         self.drone.update_temperature(dt)
         
