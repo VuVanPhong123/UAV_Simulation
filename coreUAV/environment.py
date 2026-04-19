@@ -57,7 +57,6 @@ class DeliveryEnv(gym.Env):
         }
     
     def _detect_obstacle(self):
-        """Kiểm tra xem có vật cản nào trong phạm vi cảm biến không"""
         for obs in self.obstacles:
             dx = self.drone.pos[0] - obs[0]
             dy = self.drone.pos[1] - obs[1]
@@ -71,12 +70,10 @@ class DeliveryEnv(gym.Env):
             if self._detect_obstacle():
                 self.avoiding = True
                 self.avoid_timer = self.avoid_duration
-                # Ưu tiên tăng độ cao
                 if self.drone.altitude < self.drone.max_altitude - 5:
                     self.drone.altitude = min(self.drone.max_altitude, self.drone.altitude + self.altitude_boost)
                     print(f"Né tránh: tăng độ cao lên {self.drone.altitude}m")
                 else:
-                    # Rẽ trái hoặc phải (chỉ thay đổi hướng, không thay đổi vị trí trực tiếp)
                     self.avoid_direction = 1 if np.random.rand() > 0.5 else -1
                     print(f" Né tránh: rẽ {'trái' if self.avoid_direction==-1 else 'phải'} {self.turn_angle}°")
         else:
@@ -112,7 +109,6 @@ class DeliveryEnv(gym.Env):
                     terminated = True
             return self._get_obs(), 0, terminated, truncated, {}
         
-        # 3. Hard rule: pin yếu và chưa sạc
         if self.drone.battery < self.drone.low_threshold and not self.charging_mode:
             nearest = None
             best_dist = float('inf')
@@ -134,26 +130,29 @@ class DeliveryEnv(gym.Env):
             else:
                 print(f"Pin yếu nhưng không có trạm sạc khả dụng! Tiếp tục bay.")
         
+        # --- LOGIC DI CHUYỂN MỚI ---
         if self.path and self.path_index < len(self.path) - 1:
-            current_node = self.path[self.path_index]
             next_node = self.path[self.path_index+1]
-            x1, y1 = self.graph.nodes[current_node]
             x2, y2 = self.graph.nodes[next_node]
-            dx = x2 - x1
-            dy = y2 - y1
+            
+            # Tính vector từ vị trí HIỆN TẠI đến mục tiêu
+            dx = x2 - self.drone.pos[0]
+            dy = y2 - self.drone.pos[1]
             dist = np.hypot(dx, dy)
+            
             if dist > 0:
+                # Khóa khoảng cách, không cho phép move vượt quá dist còn lại
                 move = min(self.drone.speed * dt, dist)
                 ratio = move / dist
                 new_x = self.drone.pos[0] + dx * ratio
                 new_y = self.drone.pos[1] + dy * ratio
                 self.drone.pos = (new_x, new_y)
-                if self._is_out_of_bounds(self.drone.pos):
-                    print("Drone bay ra ngoài bản đồ!")
-                    terminated = True
-                if np.hypot(new_x - x2, new_y - y2) < 0.5:
+                
+                # Nếu khoảng cách còn lại <= bước đi trong 1 frame, tức là đã đến nơi
+                if dist <= self.drone.speed * dt + 1e-4:
                     self.path_index += 1
                     self.drone.node = next_node
+                    self.drone.pos = (x2, y2) # Snap chính xác vào node
         else:
             if self.drone.node != self.graph.goal:
                 print("Hết path nhưng chưa đến goal!")
