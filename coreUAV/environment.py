@@ -33,7 +33,7 @@ class DeliveryEnv(gym.Env):
         self.drone.pos = self.graph.nodes[self.graph.start]
         self.drone.node = self.graph.start
         self.drone.altitude = self.drone.normal_altitude
-        self.path = self.graph.a_star(self.graph.start, self.graph.goal)
+        self.path = self.graph.a_star(self.graph.start, self.graph.goal, current_altitude=self.drone.altitude)
         self.path_index = 0
         self.charging_mode = False
         self.step_count = 0
@@ -101,7 +101,7 @@ class DeliveryEnv(gym.Env):
             self.drone.update_temperature(dt)
             if self.drone.status == "flying":
                 print(f"Sạc xong, pin {self.drone.battery:.1f}%, tiếp tục bay đến goal")
-                self.path = self.graph.a_star(self.drone.node, self.graph.goal)
+                self.path = self.graph.a_star(self.graph.start, self.graph.goal, current_altitude=self.drone.altitude)
                 self.path_index = 0
                 self.charging_mode = False
                 if not self.path:
@@ -113,7 +113,7 @@ class DeliveryEnv(gym.Env):
             nearest = None
             best_dist = float('inf')
             for station in self.graph.charging_stations:
-                path_to_station = self.graph.a_star(self.drone.node, station)
+                path_to_station = self.graph.a_star(self.drone.node, station, current_altitude=self.drone.altitude)
                 if path_to_station:
                     dist = self.graph.heuristic(self.drone.node, station)
                     if dist < best_dist:
@@ -121,7 +121,7 @@ class DeliveryEnv(gym.Env):
                         nearest = station
             if nearest is not None:
                 self.charging_mode = True
-                self.path = self.graph.a_star(self.drone.node, nearest)
+                self.path = self.graph.a_star(self.drone.node, nearest, current_altitude=self.drone.altitude)
                 self.path_index = 0
                 print(f"Pin yếu ({self.drone.battery:.1f}%), bay về trạm sạc {nearest}")
                 if not self.path:
@@ -130,29 +130,25 @@ class DeliveryEnv(gym.Env):
             else:
                 print(f"Pin yếu nhưng không có trạm sạc khả dụng! Tiếp tục bay.")
         
-        # --- LOGIC DI CHUYỂN MỚI ---
         if self.path and self.path_index < len(self.path) - 1:
             next_node = self.path[self.path_index+1]
             x2, y2 = self.graph.nodes[next_node]
             
-            # Tính vector từ vị trí HIỆN TẠI đến mục tiêu
             dx = x2 - self.drone.pos[0]
             dy = y2 - self.drone.pos[1]
             dist = np.hypot(dx, dy)
             
             if dist > 0:
-                # Khóa khoảng cách, không cho phép move vượt quá dist còn lại
                 move = min(self.drone.speed * dt, dist)
                 ratio = move / dist
                 new_x = self.drone.pos[0] + dx * ratio
                 new_y = self.drone.pos[1] + dy * ratio
                 self.drone.pos = (new_x, new_y)
                 
-                # Nếu khoảng cách còn lại <= bước đi trong 1 frame, tức là đã đến nơi
                 if dist <= self.drone.speed * dt + 1e-4:
                     self.path_index += 1
                     self.drone.node = next_node
-                    self.drone.pos = (x2, y2) # Snap chính xác vào node
+                    self.drone.pos = (x2, y2)
         else:
             if self.drone.node != self.graph.goal:
                 print("Hết path nhưng chưa đến goal!")

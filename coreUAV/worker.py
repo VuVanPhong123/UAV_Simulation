@@ -26,7 +26,7 @@ def on_open(ws):
     env = DeliveryEnv(config)
     obs, _ = env.reset(seed=config['simulation']['seed'])
     
-    crs_utm = env.graph.G.graph['crs']
+    crs_utm = env.graph.crs_utm
     transformer = Transformer.from_crs(crs_utm, "epsg:4326", always_xy=True)
     
     step = 0
