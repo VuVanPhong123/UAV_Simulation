@@ -2,6 +2,7 @@ import numpy as np
 import heapq
 import networkx as nx
 import geopandas as gpd
+from pyproj import Transformer
 
 class WaypointGraph:
     def __init__(self, config):
@@ -9,6 +10,7 @@ class WaypointGraph:
         
         print("Đang nạp bản đồ OSM...")
         self.G = nx.read_graphml('hanoi_uav_network.graphml')
+        print("-> Đã nạp xong đồ thị!")
         
         self.nodes = {}
         self.edges = {}
@@ -20,15 +22,36 @@ class WaypointGraph:
             self.edges[u].append(v)
             self.edges[v].append(u) 
 
-        # Đọc dữ liệu tòa nhà
+        print("Đang nạp dữ liệu tòa nhà...")
         self.buildings = gpd.read_file('hanoi_buildings.geojson')
         
+        crs_utm = self.G.graph['crs']
+        self.transformer = Transformer.from_crs("epsg:4326", crs_utm, always_xy=True)
+        
+        print("Đang tìm node xuất phát, đích và trạm sạc...")
         self.start = self._get_nearest_node(config['map']['start_latlng'])
         self.goal = self._get_nearest_node(config['map']['goal_latlng'])
         
+        self.charging_stations = []
+        if 'charging_stations_latlng' in config['map']:
+            for latlng in config['map']['charging_stations_latlng']:
+                self.charging_stations.append(self._get_nearest_node(latlng))
+                
+        print("-> Khởi tạo Môi trường hoàn tất!")
+        
     def _get_nearest_node(self, latlng):
-        import osmnx as ox
-        return ox.distance.nearest_nodes(self.G, latlng[1], latlng[0])
+        x_meters, y_meters = self.transformer.transform(latlng[1], latlng[0])
+        
+        best_node = None
+        min_dist = float('inf')
+        
+        for node, (nx_x, nx_y) in self.nodes.items():
+            dist = (nx_x - x_meters)**2 + (nx_y - y_meters)**2
+            if dist < min_dist:
+                min_dist = dist
+                best_node = node
+                
+        return best_node
 
     def heuristic(self, a, b):
         x1, y1 = self.nodes[a]
@@ -64,5 +87,8 @@ class WaypointGraph:
         while node is not None:
             path.append(node)
             node = came_from.get(node)
-        path.reverse()
-        return path if path[0] == start else []
+            
+        if path and path[-1] == start:
+            path.reverse()
+            return path
+        return []

@@ -18,11 +18,7 @@ class DeliveryEnv(gym.Env):
         self.avoiding = False
         self.avoid_timer = 0.0
         self.avoid_direction = 0
-        
-        # Danh sách vật cản tĩnh (tọa độ x,y)
-        self.obstacles = [
-            (200, 200), (250, 300), (300, 350), (400, 200)
-        ]
+        self.obstacles = []
         self.sensor_range = config['obstacle_avoidance']['sensor_range']
         self.avoid_duration = config['obstacle_avoidance']['avoidance_duration']
         self.altitude_boost = config['obstacle_avoidance']['altitude_boost']
@@ -93,9 +89,6 @@ class DeliveryEnv(gym.Env):
         return self.avoiding
     
     def _is_out_of_bounds(self, pos):
-        max_coord = (self.graph.grid_size - 1) * self.graph.spacing
-        if pos[0] < 0 or pos[0] > max_coord or pos[1] < 0 or pos[1] > max_coord:
-            return True
         return False
     
     def step(self, action=None):

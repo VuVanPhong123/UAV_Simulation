@@ -1,7 +1,6 @@
 import yaml
 import time
 import json
-import numpy as np
 import websocket
 from pyproj import Transformer
 from environment import DeliveryEnv
@@ -13,7 +12,17 @@ def on_open(ws):
     
     with open('config.yaml', 'r') as f:
         config = yaml.safe_load(f)
+        
+    init_payload = {
+        "type": "config",
+        "start": config['map']['start_latlng'],
+        "goal": config['map']['goal_latlng'],
+        "charging_stations": config['map'].get('charging_stations_latlng', [])
+    }
+    ws.send(json.dumps(init_payload))
+    print("-> Đã đẩy cấu hình bản đồ (Start, Goal, Stations) sang Frontend.")
     
+    # Khởi tạo môi trường
     env = DeliveryEnv(config)
     obs, _ = env.reset(seed=config['simulation']['seed'])
     
@@ -30,8 +39,9 @@ def on_open(ws):
         lon, lat = transformer.transform(obs['pos'][0], obs['pos'][1])
         
         state_data = {
+            "type": "telemetry",
             "step": step,
-            "pos": [lat, lon], # Web cần [Lat, Lng]
+            "pos": [lat, lon],
             "battery": float(obs['battery']),
             "altitude": float(obs['altitude']),
             "temperature": float(obs['temperature']),
