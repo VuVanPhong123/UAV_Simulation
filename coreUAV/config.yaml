@@ -1,4 +1,6 @@
 map:
+  start_latlng: [21.0260, 105.8500]
+  goal_latlng: [21.0300, 105.8580]
   grid_size: 10
   node_spacing: 50
   start: [0, 0]
