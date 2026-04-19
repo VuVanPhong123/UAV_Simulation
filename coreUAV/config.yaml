@@ -1,6 +1,9 @@
 map:
   start_latlng: [21.0260, 105.8500]
-  goal_latlng: [21.0300, 105.8580]
+  goal_latlng: [21.0310, 105.8580]
+  charging_stations_latlng:
+    - [21.0280, 105.8520]
+    - [21.0295, 105.8560]
   grid_size: 10
   node_spacing: 50
   start: [0, 0]

@@ -3,6 +3,7 @@ import time
 import json
 import numpy as np
 import websocket
+from pyproj import Transformer
 from environment import DeliveryEnv
 
 WS_URL = "ws://localhost:8080"
@@ -13,11 +14,11 @@ def on_open(ws):
     with open('config.yaml', 'r') as f:
         config = yaml.safe_load(f)
     
-    seed = config['simulation']['seed']
-    np.random.seed(seed)
-    
     env = DeliveryEnv(config)
-    obs, _ = env.reset(seed=seed)
+    obs, _ = env.reset(seed=config['simulation']['seed'])
+    
+    crs_utm = env.graph.G.graph['crs']
+    transformer = Transformer.from_crs(crs_utm, "epsg:4326", always_xy=True)
     
     step = 0
     dt = config['simulation']['time_step']
@@ -26,19 +27,20 @@ def on_open(ws):
         obs, reward, terminated, truncated, info = env.step()
         step += 1
         
+        lon, lat = transformer.transform(obs['pos'][0], obs['pos'][1])
+        
         state_data = {
             "step": step,
-            "pos": obs['pos'],
+            "pos": [lat, lon], # Web cần [Lat, Lng]
             "battery": float(obs['battery']),
             "altitude": float(obs['altitude']),
             "temperature": float(obs['temperature']),
             "status": obs['status'],
-            "node": obs['node'],
             "terminated": terminated
         }
         
         ws.send(json.dumps(state_data))
-        print(f"Sent step {step}: Pos {obs['pos']} | Bat {obs['battery']:.1f}%")
+        print(f"Step {step}: GPS({lat:.5f}, {lon:.5f}) | Bat {obs['battery']:.1f}%")
         
         time.sleep(dt) 
         
