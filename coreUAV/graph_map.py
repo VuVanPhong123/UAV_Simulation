@@ -38,7 +38,6 @@ class WaypointGraph:
         self.rows = int(np.ceil((max_y - self.min_y) / self.resolution))
         
         sindex = self.buildings.sindex
-        
         self.nodes = {}
         self.heights = {}
         
@@ -74,6 +73,7 @@ class WaypointGraph:
         return np.hypot(a[0]-b[0], a[1]-b[1]) * self.resolution
 
     def a_star(self, start, goal, current_altitude=20.0):
+        print(f"   [A*] Bắt đầu quét từ node {start} đến {goal}...")
         frontier = []
         heapq.heappush(frontier, (0, start))
         came_from = {start: None}
@@ -89,7 +89,7 @@ class WaypointGraph:
                 nxt = (current[0] + dx, current[1] + dy)
                 if not (0 <= nxt[0] < self.cols and 0 <= nxt[1] < self.rows): continue
                     
-                if self.heights[nxt] >= current_altitude: 
+                if self.heights[nxt] >= current_altitude and nxt != goal and nxt not in self.charging_stations: 
                     continue 
                     
                 base_cost = np.hypot(dx, dy) * self.resolution
@@ -109,5 +109,54 @@ class WaypointGraph:
             
         if path and path[-1] == start:
             path.reverse()
+            print(f"   [A*] Tìm thấy đường đi! (Gồm {len(path)} node)")
             return path
+        print(f"   [A*] THẤT BẠI: Bị kẹt, không thể tìm thấy đường đi!")
         return []
+
+    def is_line_of_sight(self, node_a, node_b, altitude):
+        x0, y0 = int(node_a[0]), int(node_a[1])
+        x1, y1 = int(node_b[0]), int(node_b[1])
+        
+        dx = abs(x1 - x0)
+        dy = abs(y1 - y0)
+        sx = 1 if x0 < x1 else -1
+        sy = 1 if y0 < y1 else -1
+        err = dx - dy
+        
+        while True:
+            if (x0, y0) != (int(node_a[0]), int(node_a[1])) and (x0, y0) != (int(node_b[0]), int(node_b[1])):
+                if self.heights.get((x0, y0), 0.0) >= altitude:
+                    return False
+            
+            if x0 == x1 and y0 == y1:
+                break
+                
+            e2 = 2 * err
+            if e2 > -dy:
+                err -= dy
+                x0 += sx
+            if e2 < dx:
+                err += dx
+                y0 += sy
+                
+        return True
+
+    def smooth_path(self, raw_path, altitude):
+        if not raw_path or len(raw_path) <= 2: 
+            return raw_path
+        
+        print(f"   [Làm mịn] Đang ép thẳng quỹ đạo bay...")
+        smoothed = [raw_path[0]]
+        curr = 0
+        while curr < len(raw_path) - 1:
+            next_node = len(raw_path) - 1
+            while next_node > curr + 1:
+                if self.is_line_of_sight(raw_path[curr], raw_path[next_node], altitude):
+                    break
+                next_node -= 1
+            smoothed.append(raw_path[next_node])
+            curr = next_node
+            
+        print(f"   [Làm mịn] Rút gọn từ {len(raw_path)} node xuống còn {len(smoothed)} node.")
+        return smoothed

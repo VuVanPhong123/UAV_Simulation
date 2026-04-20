@@ -38,6 +38,7 @@ class DeliveryEnv(gym.Env):
         self.path = self.graph.smooth_path(raw_path, self.drone.altitude)
         
         self.path_index = 0
+        return self._get_obs(), {}
     
     def _get_obs(self):
         return {
