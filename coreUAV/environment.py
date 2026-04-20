@@ -33,17 +33,11 @@ class DeliveryEnv(gym.Env):
         self.drone.pos = self.graph.nodes[self.graph.start]
         self.drone.node = self.graph.start
         self.drone.altitude = self.drone.normal_altitude
-        self.path = self.graph.a_star(self.graph.start, self.graph.goal, current_altitude=self.drone.altitude)
+        
+        raw_path = self.graph.a_star(self.graph.start, self.graph.goal, current_altitude=self.drone.altitude)
+        self.path = self.graph.smooth_path(raw_path, self.drone.altitude)
+        
         self.path_index = 0
-        self.charging_mode = False
-        self.step_count = 0
-        self.avoiding = False
-        self.avoid_timer = 0.0
-        self.avoid_direction = 0
-        print(f"Reset: start {self.graph.start} -> goal {self.graph.goal}")
-        if not self.path:
-            print("Không tìm thấy đường đi ban đầu!")
-        return self._get_obs(), {}
     
     def _get_obs(self):
         return {
@@ -101,34 +95,32 @@ class DeliveryEnv(gym.Env):
             self.drone.update_temperature(dt)
             if self.drone.status == "flying":
                 print(f"Sạc xong, pin {self.drone.battery:.1f}%, tiếp tục bay đến goal")
-                self.path = self.graph.a_star(self.graph.start, self.graph.goal, current_altitude=self.drone.altitude)
+                
+                raw_path = self.graph.a_star(self.drone.node, self.graph.goal, current_altitude=self.drone.altitude)
+                self.path = self.graph.smooth_path(raw_path, self.drone.altitude)
+                
                 self.path_index = 0
                 self.charging_mode = False
-                if not self.path:
-                    print("Không tìm được đường từ trạm đến goal!")
-                    terminated = True
             return self._get_obs(), 0, terminated, truncated, {}
         
         if self.drone.battery < self.drone.low_threshold and not self.charging_mode:
-            nearest = None
-            best_dist = float('inf')
-            for station in self.graph.charging_stations:
-                path_to_station = self.graph.a_star(self.drone.node, station, current_altitude=self.drone.altitude)
-                if path_to_station:
-                    dist = self.graph.heuristic(self.drone.node, station)
-                    if dist < best_dist:
-                        best_dist = dist
-                        nearest = station
-            if nearest is not None:
+            nearest_station = None
+            min_dist = float('inf')
+            
+            for station_node in self.graph.charging_stations:
+                s_pos = self.graph.nodes[station_node]
+                dist = np.hypot(self.drone.pos[0] - s_pos[0], self.drone.pos[1] - s_pos[1])
+                if dist < min_dist:
+                    path_check = self.graph.a_star(self.drone.node, station_node, self.drone.altitude)
+                    if path_check:
+                        min_dist = dist
+                        nearest_station = station_node
+                        
+            if nearest_station:
                 self.charging_mode = True
-                self.path = self.graph.a_star(self.drone.node, nearest, current_altitude=self.drone.altitude)
+                raw_path = self.graph.a_star(self.drone.node, nearest_station, self.drone.altitude)
+                self.path = self.graph.smooth_path(raw_path, self.drone.altitude)
                 self.path_index = 0
-                print(f"Pin yếu ({self.drone.battery:.1f}%), bay về trạm sạc {nearest}")
-                if not self.path:
-                    print("Không tìm được đường đến trạm sạc! Tiếp tục bay đến goal.")
-                    self.charging_mode = False
-            else:
-                print(f"Pin yếu nhưng không có trạm sạc khả dụng! Tiếp tục bay.")
         
         if self.path and self.path_index < len(self.path) - 1:
             next_node = self.path[self.path_index+1]

@@ -34,8 +34,10 @@ def build_map():
     buildings_clean = buildings_proj[['geometry', 'estimated_height']]
     
     print("\n4. Lưu dữ liệu cục bộ...")
+    buildings_clean_gps = buildings_clean.to_crs("EPSG:4326")
+    
     ox.save_graphml(G_proj, filepath='hanoi_uav_network.graphml')
-    buildings_clean.to_file("hanoi_buildings.geojson", driver="GeoJSON")
+    buildings_clean_gps.to_file("hanoi_buildings.geojson", driver="GeoJSON")
     print("HOÀN TẤT! Đã tạo xong hanoi_uav_network.graphml và hanoi_buildings.geojson")
 
 if __name__ == "__main__":
