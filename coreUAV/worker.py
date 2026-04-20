@@ -1,14 +1,16 @@
 import yaml
 import time
 import json
-import websocket
+from websocket import create_connection
 from pyproj import Transformer
 from environment import DeliveryEnv
 
 WS_URL = "ws://localhost:8080"
 
-def on_open(ws):
-    print("Đã kết nối tới Node.js Proxy")
+def main():
+    print("Đang kết nối tới Node.js Proxy...")
+    ws = create_connection(WS_URL)
+    print("Đã kết nối tới Node.js Proxy thành công!")
     
     with open('config.yaml', 'r') as f:
         config = yaml.safe_load(f)
@@ -22,7 +24,6 @@ def on_open(ws):
     ws.send(json.dumps(init_payload))
     print("-> Đã đẩy cấu hình bản đồ (Start, Goal, Stations) sang Frontend.")
     
-    # Khởi tạo môi trường
     env = DeliveryEnv(config)
     obs, _ = env.reset(seed=config['simulation']['seed'])
     
@@ -61,5 +62,4 @@ def on_open(ws):
     ws.close()
 
 if __name__ == "__main__":
-    ws = websocket.WebSocketApp(WS_URL, on_open=on_open)
-    ws.run_forever()
+    main()
