@@ -4,111 +4,118 @@ import dynamic from 'next/dynamic';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 
-const droneIcon = new L.Icon({ iconUrl: 'https://cdn-icons-png.flaticon.com/512/683/683214.png', iconSize: [40, 40], iconAnchor: [20, 20] });
-const startIcon = new L.Icon({ iconUrl: 'https://cdn-icons-png.flaticon.com/512/2555/2555572.png', iconSize: [35, 35], iconAnchor: [17, 35] });
-const goalIcon = new L.Icon({ iconUrl: 'https://cdn-icons-png.flaticon.com/512/1409/1409014.png', iconSize: [35, 35], iconAnchor: [17, 35] });
-const chargeIcon = new L.Icon({ iconUrl: 'https://cdn-icons-png.flaticon.com/512/8803/8803273.png', iconSize: [30, 30], iconAnchor: [15, 30] });
-
 const MapContainer = dynamic(() => import('react-leaflet').then(mod => mod.MapContainer), { ssr: false });
 const TileLayer = dynamic(() => import('react-leaflet').then(mod => mod.TileLayer), { ssr: false });
-const Marker = dynamic(() => import('react-leaflet').then(mod => mod.Marker), { ssr: false });
-const Popup = dynamic(() => import('react-leaflet').then(mod => mod.Popup), { ssr: false });
+const GeoJSON = dynamic(() => import('react-leaflet').then(mod => mod.GeoJSON), { ssr: false });
 const Polyline = dynamic(() => import('react-leaflet').then(mod => mod.Polyline), { ssr: false });
+const CircleMarker = dynamic(() => import('react-leaflet').then(mod => mod.CircleMarker), { ssr: false });
+const Tooltip = dynamic(() => import('react-leaflet').then(mod => mod.Tooltip), { ssr: false });
 
 export default function MapDashboard() {
-    const [mapConfig, setMapConfig] = useState<any>(null);
+    const [buildings, setBuildings] = useState<any>(null);
     const [droneState, setDroneState] = useState<any>(null);
+    const [mapConfig, setMapConfig] = useState<any>(null);
     const [pathHistory, setPathHistory] = useState<[number, number][]>([]);
 
     useEffect(() => {
+        fetch('/hanoi_buildings.geojson')
+            .then(res => res.json())
+            .then(data => setBuildings(data));
+        
         const ws = new WebSocket('ws://localhost:8080');
         ws.onmessage = (event) => {
             const data = JSON.parse(event.data);
-            
             if (data.type === 'config') {
                 setMapConfig(data);
                 setPathHistory([]);
-            } 
-            else if (data.type === 'telemetry') {
+            } else if (data.type === 'telemetry') {
                 setDroneState(data);
                 if (data.pos) {
-                    setPathHistory(prev => [...prev.slice(-200), [data.pos[0], data.pos[1]]]);
+                    setPathHistory(prev => [...prev.slice(-300), [data.pos[0], data.pos[1]]]);
                 }
             }
         };
         return () => ws.close();
     }, []);
 
-    // Tọa độ mặc định nếu chưa nhận được gì
     const defaultCenter: [number, number] = [21.0285, 105.8542];
     const mapCenter = mapConfig ? mapConfig.start : defaultCenter;
-    const currentPosition = droneState?.pos ? [droneState.pos[0], droneState.pos[1]] : mapCenter;
 
     return (
-        <div className="flex h-screen bg-slate-50 text-slate-900 font-sans">
-            {/* Sidebar Debug */}
-            <div className="w-80 bg-white shadow-xl z-[1000] border-r border-slate-200 overflow-y-auto">
-                <div className="p-5 bg-blue-600 text-white">
-                    <h2 className="text-xl font-bold uppercase tracking-wider">UAV Ground Control</h2>
-                </div>
+        <div className="flex h-screen bg-white font-sans text-slate-800">
+            {/* CSS Tùy chỉnh cho Nhãn độ cao */}
+            <style>{`
+                .building-label {
+                    background: transparent !important;
+                    border: none !important;
+                    box-shadow: none !important;
+                    font-weight: 800 !important;
+                    font-size: 10px !important;
+                    color: #475569 !important;
+                    text-shadow: 1px 1px 0px #fff, -1px -1px 0px #fff, 1px -1px 0px #fff, -1px 1px 0px #fff;
+                }
+            `}</style>
 
-                <div className="p-5 space-y-6">
-                    <section>
-                        <h3 className="text-sm font-bold text-slate-400 uppercase mb-3">Thông số UAV</h3>
-                        {droneState ? (
-                            <div className="space-y-3">
-                                <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg">
-                                    <p className="text-xs text-blue-500 font-bold uppercase">Trạng thái</p>
-                                    <p className="text-lg font-black text-blue-900">{droneState.status}</p>
-                                </div>
-                                <div className="p-3 bg-slate-50 border border-slate-100 rounded-lg">
-                                    <p className="text-xs text-slate-500 font-bold uppercase">Pin: {droneState.battery.toFixed(1)}%</p>
-                                </div>
-                                <div className="flex justify-between p-3 bg-slate-50 border border-slate-100 rounded-lg">
-                                    <p>Cao: <span className="font-bold">{droneState.altitude.toFixed(1)}m</span></p>
-                                    <p>Nhiệt: <span className="font-bold">{droneState.temperature.toFixed(1)}°C</span></p>
-                                </div>
-                            </div>
-                        ) : <div className="text-slate-400 text-sm animate-pulse italic">Đang đợi Telemetry...</div>}
-                    </section>
-
-                    <section className="border-t pt-5">
-                        <h3 className="text-sm font-bold text-slate-400 uppercase mb-3">YAML Config Đã Nạp</h3>
-                        {mapConfig ? (
-                            <div className="space-y-2 text-xs font-mono bg-slate-800 text-green-400 p-3 rounded-md shadow-inner">
-                                <p>START: [{mapConfig.start[0].toFixed(4)}, {mapConfig.start[1].toFixed(4)}]</p>
-                                <p>GOAL: [{mapConfig.goal[0].toFixed(4)}, {mapConfig.goal[1].toFixed(4)}]</p>
-                                <p>STATIONS: {mapConfig.charging_stations.length} trạm</p>
-                            </div>
-                        ) : <div className="text-slate-400 text-sm italic">Đang đợi Config từ Python Worker...</div>}
-                    </section>
-                </div>
+            <div className="w-64 border-r border-slate-200 p-6 z-[1000] bg-slate-50 flex flex-col gap-6">
+                <h2 className="text-lg font-bold border-b pb-2 text-slate-700">UAV Control</h2>
+                {droneState ? (
+                    <div className="space-y-4">
+                        <div className="p-3 bg-white rounded border border-slate-200">
+                            <p className="text-[10px] uppercase font-bold text-slate-400">Trạng thái</p>
+                            <p className="font-mono text-blue-600 font-bold">{droneState.status}</p>
+                        </div>
+                        <div className="p-3 bg-white rounded border border-slate-200">
+                            <p className="text-[10px] uppercase font-bold text-slate-400">Pin / Độ cao</p>
+                            <p className="font-mono font-bold text-slate-700">
+                                {droneState.battery.toFixed(1)}% / {droneState.altitude}m
+                            </p>
+                        </div>
+                    </div>
+                ) : <p className="italic text-slate-400 text-sm">Đang chờ telemetry...</p>}
             </div>
 
-            {/* Map Area */}
             <div className="flex-1 relative">
-                <MapContainer center={mapCenter} zoom={15} className="h-full w-full">
-                    <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-                    
-                    {/* Render động dựa trên dữ liệu server gửi qua */}
+                <MapContainer center={mapCenter} zoom={17} className="h-full w-full">
+                    <TileLayer url="https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png" />
+
+                    {buildings && (
+                        <GeoJSON 
+                            data={buildings} 
+                            style={() => ({ color: '#94a3b8', weight: 1, fillColor: '#e2e8f0', fillOpacity: 0.6 })}
+                            onEachFeature={(feature, layer) => {
+                                // Gắn số độ cao kèm chữ 'm' lên từng khối nhà
+                                if (feature.properties?.estimated_height) {
+                                    layer.bindTooltip(
+                                        `${feature.properties.estimated_height}m`, 
+                                        { permanent: true, direction: 'center', className: 'building-label' }
+                                    );
+                                }
+                            }}
+                        />
+                    )}
+
+                    <Polyline positions={pathHistory} pathOptions={{ color: '#3b82f6', weight: 3, opacity: 0.7, dashArray: '5, 10' }} />
+
                     {mapConfig && (
                         <>
-                            <Marker position={mapConfig.start} icon={startIcon}><Popup>XUẤT PHÁT</Popup></Marker>
-                            <Marker position={mapConfig.goal} icon={goalIcon}><Popup>ĐÍCH ĐẾN</Popup></Marker>
+                            <CircleMarker center={mapConfig.start} radius={6} pathOptions={{ color: 'green', fillColor: 'green', fillOpacity: 1 }}>
+                                <Tooltip>START</Tooltip>
+                            </CircleMarker>
+                            <CircleMarker center={mapConfig.goal} radius={6} pathOptions={{ color: 'red', fillColor: 'red', fillOpacity: 1 }}>
+                                <Tooltip>GOAL</Tooltip>
+                            </CircleMarker>
                             {mapConfig.charging_stations.map((pos: [number, number], idx: number) => (
-                                <Marker key={`charge-${idx}`} position={pos} icon={chargeIcon}>
-                                    <Popup>Trạm sạc #{idx+1}</Popup>
-                                </Marker>
+                                <CircleMarker key={idx} center={pos} radius={5} pathOptions={{ color: '#eab308', fillColor: '#eab308', fillOpacity: 1 }}>
+                                    <Tooltip permanent className="building-label" direction="top">Trạm {idx+1}</Tooltip>
+                                </CircleMarker>
                             ))}
                         </>
                     )}
 
-                    <Polyline positions={pathHistory} pathOptions={{ color: '#2563eb', weight: 4, opacity: 0.6 }} />
-
                     {droneState && (
-                        <Marker position={currentPosition as [number, number]} icon={droneIcon}>
-                            <Popup>UAV-01 ({droneState.status})</Popup>
-                        </Marker>
+                        <CircleMarker center={droneState.pos} radius={8} pathOptions={{ color: '#2563eb', fillColor: '#2563eb', fillOpacity: 1, weight: 2 }}>
+                            <Tooltip permanent direction="bottom" className="building-label">UAV</Tooltip>
+                        </CircleMarker>
                     )}
                 </MapContainer>
             </div>
