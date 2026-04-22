@@ -19,7 +19,8 @@ def main():
         "type": "config",
         "start": config['map']['start_latlng'],
         "goal": config['map']['goal_latlng'],
-        "charging_stations": config['map'].get('charging_stations_latlng', [])
+        "charging_stations": config['map'].get('charging_stations_latlng', []),
+        "no_fly_zones": config['map'].get('no_fly_zones', [])
     }
     ws.send(json.dumps(init_payload))
     print("-> Đã đẩy cấu hình bản đồ (Start, Goal, Stations) sang Frontend.")

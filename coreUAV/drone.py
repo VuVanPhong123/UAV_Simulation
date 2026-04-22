@@ -13,27 +13,29 @@ class Drone:
         self.max_altitude = config['drone']['max_altitude']
         self.min_altitude = config['drone']['min_altitude']
         self.normal_altitude = config['drone']['normal_altitude']
+        self.payload_weight = config['drone'].get('payload_weight', 0.0)
+        self.payload_penalty = config['drone'].get('payload_penalty', 0.0)
         self.pos = None
         self.node = None
         self.altitude = self.normal_altitude
         self.heading = 0.0
         self.temperature = 30.0
         self.status = "flying"
+    def consume_battery(self, dt, climbing=False):
+        rate = self.discharge_base
+        if climbing:
+            rate = self.discharge_climb
+        rate += (self.payload_weight * self.payload_penalty)
         
+        self.battery -= rate * dt
+        if self.battery < 0:
+            self.battery = 0
     def update_temperature(self, dt):
         if self.status == "flying":
             self.temperature += 0.5 * dt
         elif self.status == "charging":
             self.temperature -= 1.0 * dt
         self.temperature = max(20, min(60, self.temperature))
-    
-    def consume_battery(self, dt, climbing=False):
-        rate = self.discharge_base
-        if climbing:
-            rate = self.discharge_climb
-        self.battery -= rate * dt
-        if self.battery < 0:
-            self.battery = 0
     
     def recharge(self, dt):
         self.battery += self.recharge_rate * dt

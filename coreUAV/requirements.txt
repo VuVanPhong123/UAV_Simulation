@@ -2,3 +2,7 @@ numpy
 gymnasium
 pyyaml
 websocket-client
+osmnx
+networkx
+geopandas
+shapely

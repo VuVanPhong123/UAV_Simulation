@@ -10,7 +10,7 @@ const GeoJSON = dynamic(() => import('react-leaflet').then(mod => mod.GeoJSON), 
 const Polyline = dynamic(() => import('react-leaflet').then(mod => mod.Polyline), { ssr: false });
 const CircleMarker = dynamic(() => import('react-leaflet').then(mod => mod.CircleMarker), { ssr: false });
 const Tooltip = dynamic(() => import('react-leaflet').then(mod => mod.Tooltip), { ssr: false });
-
+const Circle = dynamic(() => import('react-leaflet').then(mod => mod.Circle), { ssr: false });
 export default function MapDashboard() {
     const [buildings, setBuildings] = useState<any>(null);
     const [droneState, setDroneState] = useState<any>(null);
@@ -21,7 +21,7 @@ export default function MapDashboard() {
         fetch('/hanoi_buildings.geojson')
             .then(res => res.json())
             .then(data => setBuildings(data));
-        
+
         const ws = new WebSocket('ws://localhost:8080');
         ws.onmessage = (event) => {
             const data = JSON.parse(event.data);
@@ -79,14 +79,14 @@ export default function MapDashboard() {
                     <TileLayer url="https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png" />
 
                     {buildings && (
-                        <GeoJSON 
-                            data={buildings} 
+                        <GeoJSON
+                            data={buildings}
                             style={() => ({ color: '#94a3b8', weight: 1, fillColor: '#e2e8f0', fillOpacity: 0.6 })}
                             onEachFeature={(feature, layer) => {
                                 // Gắn số độ cao kèm chữ 'm' lên từng khối nhà
                                 if (feature.properties?.estimated_height) {
                                     layer.bindTooltip(
-                                        `${feature.properties.estimated_height}m`, 
+                                        `${feature.properties.estimated_height}m`,
                                         { permanent: true, direction: 'center', className: 'building-label' }
                                     );
                                 }
@@ -104,10 +104,23 @@ export default function MapDashboard() {
                             <CircleMarker center={mapConfig.goal} radius={6} pathOptions={{ color: 'red', fillColor: 'red', fillOpacity: 1 }}>
                                 <Tooltip>GOAL</Tooltip>
                             </CircleMarker>
+                            {mapConfig.no_fly_zones && mapConfig.no_fly_zones.map((nfz: any, idx: number) => (
+                                    <Circle
+                                        key={`nfz-${idx}`}
+                                        center={nfz.center}
+                                        radius={nfz.radius}
+                                        pathOptions={{ color: '#ef4444', fillColor: '#ef4444', fillOpacity: 0.2, dashArray: '5, 5' }}
+                                    >
+                                        <Tooltip direction="center" permanent className="building-label !text-red-700 !bg-transparent">
+                                            NO FLY ZONE
+                                        </Tooltip>
+                                    </Circle>
+                                ))}
                             {mapConfig.charging_stations.map((pos: [number, number], idx: number) => (
                                 <CircleMarker key={idx} center={pos} radius={5} pathOptions={{ color: '#eab308', fillColor: '#eab308', fillOpacity: 1 }}>
-                                    <Tooltip permanent className="building-label" direction="top">Trạm {idx+1}</Tooltip>
+                                    <Tooltip permanent className="building-label" direction="top">Trạm {idx + 1}</Tooltip>
                                 </CircleMarker>
+                                
                             ))}
                         </>
                     )}

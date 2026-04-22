@@ -4,24 +4,32 @@ map:
   charging_stations_latlng:
     - [21.0280, 105.8520]
     - [21.0295, 105.8560]
+  no_fly_zones:
+    - center: [21.0293, 105.8540]
+      radius: 80.0
+    - center: [21.0272, 105.8520]
+      radius: 60.0
 
 drone:
   max_battery: 100.0
   discharge_rate_base: 0.2
   discharge_rate_climb: 1.2
-  speed: 10.0
+  speed: 80.0
   battery_low_threshold: 30.0
   battery_safe_target: 80.0
   recharge_rate: 10.0
   max_altitude: 50.0
   min_altitude: 5.0
   normal_altitude: 20.0
+  payload_weight: 2.5
+  payload_penalty: 0.05
 
 obstacle_avoidance:
   sensor_range: 30.0
   avoidance_duration: 2.0
   altitude_boost: 10.0
   turn_angle: 30.0
+  safety_margin: 5.0
 
 simulation:
   time_step: 0.1

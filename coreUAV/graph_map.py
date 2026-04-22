@@ -8,7 +8,7 @@ class WaypointGraph:
     def __init__(self, config):
         self.config = config
         self.resolution = 10.0
-        
+        self.safety_margin = config.get('obstacle_avoidance', {}).get('safety_margin', 5.0)
         print("Đang nạp dữ liệu tòa nhà 2.5D...")
         self.buildings = gpd.read_file('hanoi_buildings.geojson')
         
@@ -21,6 +21,13 @@ class WaypointGraph:
         
         print(f"-> Môi trường 2.5D hoàn tất với {self.cols}x{self.rows} mắt lưới!")
 
+    def is_in_nfz(self, node):
+        x, y = self.nodes.get(node, (0, 0))
+        for nx, ny, r in self.nfz_utm:
+            if np.hypot(x - nx, y - ny) <= (r + self.safety_margin):
+                return True
+        return False
+    
     def _build_2_5d_grid(self, config):
         pts_gps = [config['map']['start_latlng'], config['map']['goal_latlng']]
         if 'charging_stations_latlng' in config['map']:
@@ -37,6 +44,14 @@ class WaypointGraph:
         self.cols = int(np.ceil((max_x - self.min_x) / self.resolution))
         self.rows = int(np.ceil((max_y - self.min_y) / self.resolution))
         
+        self.nfz_utm = []
+        if 'no_fly_zones' in config.get('map', {}):
+            for nfz in config['map']['no_fly_zones']:
+                lat, lon = nfz['center']
+                r = nfz['radius']
+                x, y = self.transformer.transform(lon, lat)
+                self.nfz_utm.append((x, y, r))
+
         sindex = self.buildings.sindex
         self.nodes = {}
         self.heights = {}
@@ -46,11 +61,11 @@ class WaypointGraph:
                 x = self.min_x + i * self.resolution
                 y = self.min_y + j * self.resolution
                 self.nodes[(i, j)] = (x, y)
+                search_area = Point(x, y).buffer(self.safety_margin)
                 
-                point = Point(x, y)
-                possible_matches_index = list(sindex.intersection(point.bounds))
+                possible_matches_index = list(sindex.intersection(search_area.bounds))
                 possible_matches = self.buildings.iloc[possible_matches_index]
-                precise_matches = possible_matches[possible_matches.intersects(point)]
+                precise_matches = possible_matches[possible_matches.intersects(search_area)]
                 
                 if not precise_matches.empty:
                     self.heights[(i, j)] = float(precise_matches['estimated_height'].max())
@@ -88,7 +103,9 @@ class WaypointGraph:
             for dx, dy in directions:
                 nxt = (current[0] + dx, current[1] + dy)
                 if not (0 <= nxt[0] < self.cols and 0 <= nxt[1] < self.rows): continue
-                    
+
+                if self.is_in_nfz(nxt):
+                    continue
                 if self.heights[nxt] >= current_altitude and nxt != goal and nxt not in self.charging_stations: 
                     continue 
                     
@@ -128,7 +145,8 @@ class WaypointGraph:
             if (x0, y0) != (int(node_a[0]), int(node_a[1])) and (x0, y0) != (int(node_b[0]), int(node_b[1])):
                 if self.heights.get((x0, y0), 0.0) >= altitude:
                     return False
-            
+                if self.is_in_nfz((x0, y0)):
+                    return False
             if x0 == x1 and y0 == y1:
                 break
                 
