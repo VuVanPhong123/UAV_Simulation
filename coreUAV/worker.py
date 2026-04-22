@@ -33,44 +33,69 @@ def main():
     crs_utm = env.graph.crs_utm
     transformer = Transformer.from_crs(crs_utm, "epsg:4326", always_xy=True)
     
-    step = 0
     dt = config['simulation']['time_step']
+    is_running = False
+    step = 0
     
-    while True:
-        try:
-            msg = ws.recv()
-            data = json.loads(msg)
-            if data.get('type') == 'add_obstacle':
-                env.add_obstacle(data['pos'])
-        except websocket.WebSocketTimeoutException:
-            pass
-        except Exception as e:
-            pass
+    print("\n==============================================")
+    print("Worker DA SAN SANG! Dang cho lenh tu Web...")
+    print("==============================================\n")
 
-        obs, reward, terminated, truncated, info = env.step()
-        step += 1
-        
-        lon, lat = transformer.transform(obs['pos'][0], obs['pos'][1])
-        
+    def send_telemetry():
+        lon, lat = transformer.transform(env.drone.pos[0], env.drone.pos[1])
         state_data = {
             "type": "telemetry",
             "step": step,
             "pos": [lat, lon],
-            "battery": float(obs['battery']),
-            "altitude": float(obs['altitude']),
-            "temperature": float(obs['temperature']),
-            "status": obs['status'],
-            "terminated": terminated
+            "battery": float(env.drone.battery),
+            "altitude": float(env.drone.altitude),
+            "temperature": float(env.drone.temperature),
+            "status": env.drone.status,
+            "terminated": False
         }
-        
         ws.send(json.dumps(state_data))
-        print(f"Step {step}: GPS({lat:.5f}, {lon:.5f}) | Bat {obs['battery']:.1f}%")
-        
-        time.sleep(dt) 
-        
-        if terminated or truncated:
-            print("\nKet thuc vong lap mo phong.")
-            break
+
+    send_telemetry()
+
+    while True:
+        try:
+            msg = ws.recv()
+            data = json.loads(msg)
+            
+            if data.get('type') == 'add_obstacle':
+                env.add_obstacle(data['pos'])
+                
+            elif data.get('type') == 'command':
+                cmd = data.get('action')
+                if cmd == 'start':
+                    if not is_running:
+                        print("Da nhan lenh BAT DAU mo phong!")
+                        is_running = True
+                        
+                elif cmd == 'reset':
+                    print("Da nhan lenh LAM MOI (Reset) he thong!")
+                    is_running = False
+                    env.reset()
+                    step = 0
+                    send_telemetry()
+                    
+        except websocket.WebSocketTimeoutException:
+            pass
+        except Exception as e:
+            pass 
+
+        if is_running:
+            obs, reward, terminated, truncated, info = env.step()
+            step += 1
+            
+            send_telemetry()
+            time.sleep(dt)
+            
+            if terminated or truncated:
+                print("Hanh trinh ket thuc (Toi dich hoac Het pin). Chuyen ve trang thai IDLE.")
+                is_running = False
+        else:
+            time.sleep(0.05)
             
     ws.close()
 
