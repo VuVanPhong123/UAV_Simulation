@@ -40,6 +40,11 @@ class DeliveryEnv(gym.Env):
         self.path_index = 0
         return self._get_obs(), {}
     
+    def add_obstacle(self, latlng):
+        x, y = self.graph.transformer.transform(latlng[1], latlng[0])
+        self.obstacles.append({'pos': (x, y), 'detected': False})
+        print(f"Ve tinh bao cao co vat can xuat hien tai toa do GPS {latlng}")
+    
     def _get_obs(self):
         return {
             "pos": self.drone.pos,
@@ -52,32 +57,38 @@ class DeliveryEnv(gym.Env):
         }
     
     def _detect_obstacle(self):
+        detected_any = False
         for obs in self.obstacles:
-            dx = self.drone.pos[0] - obs[0]
-            dy = self.drone.pos[1] - obs[1]
-            dist = np.hypot(dx, dy)
-            if dist < self.sensor_range:
-                return True
-        return False
+            if not obs['detected']:
+                dx = self.drone.pos[0] - obs['pos'][0]
+                dy = self.drone.pos[1] - obs['pos'][1]
+                if np.hypot(dx, dy) < self.sensor_range:
+                    obs['detected'] = True
+                    self.graph.add_dynamic_obstacle(obs['pos'])
+                    detected_any = True
+        return detected_any
     
     def _handle_avoidance(self, dt):
-        if not self.avoiding:
-            if self._detect_obstacle():
-                self.avoiding = True
-                self.avoid_timer = self.avoid_duration
-                if self.drone.altitude < self.drone.max_altitude - 5:
-                    self.drone.altitude = min(self.drone.max_altitude, self.drone.altitude + self.altitude_boost)
-                    print(f"Né tránh: tăng độ cao lên {self.drone.altitude}m")
+        if self._detect_obstacle():
+            print("CANH BAO: Radar phat hien vat can dong! Dang tinh toan lai quy dao...")
+            self.avoiding = True
+
+            raw_path = self.graph.a_star(self.drone.node, self.graph.goal, self.drone.altitude)
+
+            if raw_path:
+                self.path = self.graph.smooth_path(raw_path, self.drone.altitude)
+                self.path_index = 0
+                print("Da chot quy dao moi lach qua vat can!")
+            else:
+                print("KHAN CAP: Het duong lach! Bat che do Pop-up (Vot len cao)...")
+                self.drone.altitude = min(self.drone.max_altitude, self.drone.altitude + self.altitude_boost)
+                
+                raw_path = self.graph.a_star(self.drone.node, self.graph.goal, self.drone.altitude)
+                if raw_path:
+                    self.path = self.graph.smooth_path(raw_path, self.drone.altitude)
+                    self.path_index = 0
                 else:
-                    self.avoid_direction = 1 if np.random.rand() > 0.5 else -1
-                    print(f" Né tránh: rẽ {'trái' if self.avoid_direction==-1 else 'phải'} {self.turn_angle}°")
-        else:
-            self.avoid_timer -= dt
-            if self.avoid_timer <= 0:
-                self.avoiding = False
-                self.drone.altitude = self.drone.normal_altitude
-                self.avoid_direction = 0
-                print(" Kết thúc né tránh, quay lại đường bay bình thường")
+                    print("That bai: Vat can qua lon, khong the vuot qua.")
         return self.avoiding
     
     def _is_out_of_bounds(self, pos):

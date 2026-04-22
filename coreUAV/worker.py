@@ -1,6 +1,7 @@
 import yaml
 import time
 import json
+import websocket
 from websocket import create_connection
 from pyproj import Transformer
 from environment import DeliveryEnv
@@ -8,9 +9,10 @@ from environment import DeliveryEnv
 WS_URL = "ws://localhost:8080"
 
 def main():
-    print("Đang kết nối tới Node.js Proxy...")
+    print("Dang ket noi toi Node.js Proxy...")
     ws = create_connection(WS_URL)
-    print("Đã kết nối tới Node.js Proxy thành công!")
+    ws.settimeout(0.01)
+    print("Da ket noi toi Node.js Proxy thanh cong!")
     
     with open('config.yaml', 'r') as f:
         config = yaml.safe_load(f)
@@ -23,7 +25,7 @@ def main():
         "no_fly_zones": config['map'].get('no_fly_zones', [])
     }
     ws.send(json.dumps(init_payload))
-    print("-> Đã đẩy cấu hình bản đồ (Start, Goal, Stations) sang Frontend.")
+    print("-> Da day cau hinh ban do (Start, Goal, Stations) sang Frontend.")
     
     env = DeliveryEnv(config)
     obs, _ = env.reset(seed=config['simulation']['seed'])
@@ -35,6 +37,16 @@ def main():
     dt = config['simulation']['time_step']
     
     while True:
+        try:
+            msg = ws.recv()
+            data = json.loads(msg)
+            if data.get('type') == 'add_obstacle':
+                env.add_obstacle(data['pos'])
+        except websocket.WebSocketTimeoutException:
+            pass
+        except Exception as e:
+            pass
+
         obs, reward, terminated, truncated, info = env.step()
         step += 1
         
@@ -57,7 +69,7 @@ def main():
         time.sleep(dt) 
         
         if terminated or truncated:
-            print("\nKết thúc vòng lặp mô phỏng.")
+            print("\nKet thuc vong lap mo phong.")
             break
             
     ws.close()

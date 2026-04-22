@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
@@ -11,19 +11,23 @@ const Polyline = dynamic(() => import('react-leaflet').then(mod => mod.Polyline)
 const CircleMarker = dynamic(() => import('react-leaflet').then(mod => mod.CircleMarker), { ssr: false });
 const Tooltip = dynamic(() => import('react-leaflet').then(mod => mod.Tooltip), { ssr: false });
 const Circle = dynamic(() => import('react-leaflet').then(mod => mod.Circle), { ssr: false });
+const MapEvents = dynamic(() => import('./MapEvents'), { ssr: false });
+
 export default function MapDashboard() {
     const [buildings, setBuildings] = useState<any>(null);
     const [droneState, setDroneState] = useState<any>(null);
     const [mapConfig, setMapConfig] = useState<any>(null);
     const [pathHistory, setPathHistory] = useState<[number, number][]>([]);
+    const [dynamicObstacles, setDynamicObstacles] = useState<[number, number][]>([]);
+    const wsRef = useRef<WebSocket | null>(null);
 
     useEffect(() => {
         fetch('/hanoi_buildings.geojson')
             .then(res => res.json())
             .then(data => setBuildings(data));
 
-        const ws = new WebSocket('ws://localhost:8080');
-        ws.onmessage = (event) => {
+        wsRef.current = new WebSocket('ws://localhost:8080');
+        wsRef.current.onmessage = (event) => {
             const data = JSON.parse(event.data);
             if (data.type === 'config') {
                 setMapConfig(data);
@@ -35,15 +39,22 @@ export default function MapDashboard() {
                 }
             }
         };
-        return () => ws.close();
+        return () => wsRef.current?.close();
     }, []);
+
+    const handleMapClick = (latlng: [number, number]) => {
+        setDynamicObstacles(prev => [...prev, latlng]);
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            wsRef.current.send(JSON.stringify({ type: 'add_obstacle', pos: latlng }));
+        }
+    };
 
     const defaultCenter: [number, number] = [21.0285, 105.8542];
     const mapCenter = mapConfig ? mapConfig.start : defaultCenter;
 
     return (
         <div className="flex h-screen bg-white font-sans text-slate-800">
-            {/* CSS Tùy chỉnh cho Nhãn độ cao */}
+            {/* CSS Tuy chinh cho Nhan do cao */}
             <style>{`
                 .building-label {
                     background: transparent !important;
@@ -61,21 +72,22 @@ export default function MapDashboard() {
                 {droneState ? (
                     <div className="space-y-4">
                         <div className="p-3 bg-white rounded border border-slate-200">
-                            <p className="text-[10px] uppercase font-bold text-slate-400">Trạng thái</p>
+                            <p className="text-[10px] uppercase font-bold text-slate-400">Trang thai</p>
                             <p className="font-mono text-blue-600 font-bold">{droneState.status}</p>
                         </div>
                         <div className="p-3 bg-white rounded border border-slate-200">
-                            <p className="text-[10px] uppercase font-bold text-slate-400">Pin / Độ cao</p>
+                            <p className="text-[10px] uppercase font-bold text-slate-400">Pin / Do cao</p>
                             <p className="font-mono font-bold text-slate-700">
                                 {droneState.battery.toFixed(1)}% / {droneState.altitude}m
                             </p>
                         </div>
                     </div>
-                ) : <p className="italic text-slate-400 text-sm">Đang chờ telemetry...</p>}
+                ) : <p className="italic text-slate-400 text-sm">Dang cho telemetry...</p>}
             </div>
 
             <div className="flex-1 relative">
                 <MapContainer center={mapCenter} zoom={17} className="h-full w-full">
+                    <MapEvents onMapClick={handleMapClick} />
                     <TileLayer url="https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png" />
 
                     {buildings && (
@@ -83,7 +95,6 @@ export default function MapDashboard() {
                             data={buildings}
                             style={() => ({ color: '#94a3b8', weight: 1, fillColor: '#e2e8f0', fillOpacity: 0.6 })}
                             onEachFeature={(feature, layer) => {
-                                // Gắn số độ cao kèm chữ 'm' lên từng khối nhà
                                 if (feature.properties?.estimated_height) {
                                     layer.bindTooltip(
                                         `${feature.properties.estimated_height}m`,
@@ -105,30 +116,52 @@ export default function MapDashboard() {
                                 <Tooltip>GOAL</Tooltip>
                             </CircleMarker>
                             {mapConfig.no_fly_zones && mapConfig.no_fly_zones.map((nfz: any, idx: number) => (
-                                    <Circle
-                                        key={`nfz-${idx}`}
-                                        center={nfz.center}
-                                        radius={nfz.radius}
-                                        pathOptions={{ color: '#ef4444', fillColor: '#ef4444', fillOpacity: 0.2, dashArray: '5, 5' }}
-                                    >
-                                        <Tooltip direction="center" permanent className="building-label !text-red-700 !bg-transparent">
-                                            NO FLY ZONE
-                                        </Tooltip>
-                                    </Circle>
-                                ))}
+                                <Circle
+                                    key={`nfz-${idx}`}
+                                    center={nfz.center}
+                                    radius={nfz.radius}
+                                    pathOptions={{ color: '#ef4444', fillColor: '#ef4444', fillOpacity: 0.2, dashArray: '5, 5' }}
+                                >
+                                    <Tooltip direction="center" permanent className="building-label !text-red-700 !bg-transparent">
+                                        NO FLY ZONE
+                                    </Tooltip>
+                                </Circle>
+                            ))}
                             {mapConfig.charging_stations.map((pos: [number, number], idx: number) => (
                                 <CircleMarker key={idx} center={pos} radius={5} pathOptions={{ color: '#eab308', fillColor: '#eab308', fillOpacity: 1 }}>
-                                    <Tooltip permanent className="building-label" direction="top">Trạm {idx + 1}</Tooltip>
+                                    <Tooltip permanent className="building-label" direction="top">Tram {idx + 1}</Tooltip>
                                 </CircleMarker>
-                                
                             ))}
                         </>
                     )}
 
+                    {dynamicObstacles.map((pos, idx) => (
+                        <Circle key={`dyn-obs-${idx}`} center={pos} radius={2} pathOptions={{ color: '#f97316', fillColor: '#f97316', fillOpacity: 0.5 }}>
+                        </Circle>
+                    ))}
+
                     {droneState && (
-                        <CircleMarker center={droneState.pos} radius={8} pathOptions={{ color: '#2563eb', fillColor: '#2563eb', fillOpacity: 1, weight: 2 }}>
-                            <Tooltip permanent direction="bottom" className="building-label">UAV</Tooltip>
-                        </CircleMarker>
+                        <>
+                            <Circle
+                                center={droneState.pos}
+                                radius={30}
+                                pathOptions={{
+                                    color: '#60a5fa',
+                                    fillColor: '#93c5fd',
+                                    fillOpacity: 0.15,
+                                    weight: 1,
+                                    dashArray: '4, 4'
+                                }}
+                            />
+
+                            <CircleMarker
+                                center={droneState.pos}
+                                radius={8}
+                                pathOptions={{ color: '#2563eb', fillColor: '#2563eb', fillOpacity: 1, weight: 2 }}
+                            >
+                                <Tooltip permanent direction="bottom" className="building-label">UAV</Tooltip>
+                            </CircleMarker>
+                        </>
                     )}
                 </MapContainer>
             </div>

@@ -14,7 +14,7 @@ drone:
   max_battery: 100.0
   discharge_rate_base: 0.2
   discharge_rate_climb: 1.2
-  speed: 80.0
+  speed: 20.0
   battery_low_threshold: 30.0
   battery_safe_target: 80.0
   recharge_rate: 10.0
