@@ -28,16 +28,28 @@ class DeliveryEnv(gym.Env):
     
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
+        
+        self.obstacles = []
+        self.graph.clear_dynamic_obstacles()
+        
         self.drone.battery = self.drone.max_battery
         self.drone.status = "flying"
         self.drone.pos = self.graph.nodes[self.graph.start]
         self.drone.node = self.graph.start
         self.drone.altitude = self.drone.normal_altitude
         
+        self.charging_mode = False
+        self.avoiding = False
+        self.avoid_timer = 0.0
+        self.avoid_direction = 0
+        
+        print("Dang tinh toan quy dao goc...")
         raw_path = self.graph.a_star(self.graph.start, self.graph.goal, current_altitude=self.drone.altitude)
         self.path = self.graph.smooth_path(raw_path, self.drone.altitude)
         
         self.path_index = 0
+        self.step_count = 0
+        
         return self._get_obs(), {}
     
     def add_obstacle(self, latlng):
@@ -69,26 +81,42 @@ class DeliveryEnv(gym.Env):
         return detected_any
     
     def _handle_avoidance(self, dt):
-        if self._detect_obstacle():
-            print("CANH BAO: Radar phat hien vat can dong! Dang tinh toan lai quy dao...")
-            self.avoiding = True
-
-            raw_path = self.graph.a_star(self.drone.node, self.graph.goal, self.drone.altitude)
-
-            if raw_path:
-                self.path = self.graph.smooth_path(raw_path, self.drone.altitude)
-                self.path_index = 0
-                print("Da chot quy dao moi lach qua vat can!")
-            else:
-                print("KHAN CAP: Het duong lach! Bat che do Pop-up (Vot len cao)...")
-                self.drone.altitude = min(self.drone.max_altitude, self.drone.altitude + self.altitude_boost)
+        if not self.avoiding:
+            if self._detect_obstacle():
+                print("CẢNH BÁO: Radar phát hiện vật cản động! Đang tính toán lại quỹ đạo...")
+                self.avoiding = True
                 
+                cx = int(round((self.drone.pos[0] - self.graph.min_x) / self.graph.resolution))
+                cy = int(round((self.drone.pos[1] - self.graph.min_y) / self.graph.resolution))
+            
+                cx = max(0, min(self.graph.cols - 1, cx))
+                cy = max(0, min(self.graph.rows - 1, cy))
+                
+                self.drone.node = (cx, cy)
                 raw_path = self.graph.a_star(self.drone.node, self.graph.goal, self.drone.altitude)
+
                 if raw_path:
                     self.path = self.graph.smooth_path(raw_path, self.drone.altitude)
                     self.path_index = 0
+                    print("Đã chốt quỹ đạo mới lách qua vật cản!")
                 else:
-                    print("That bai: Vat can qua lon, khong the vuot qua.")
+                    print("KHẨN CẤP: Hết đường lách! Bật chế độ Pop-up (Vọt lên cao)...")
+                    self.drone.altitude = min(self.drone.max_altitude, self.drone.altitude + self.altitude_boost)
+                    
+                    raw_path = self.graph.a_star(self.drone.node, self.graph.goal, self.drone.altitude)
+                    if raw_path:
+                        self.path = self.graph.smooth_path(raw_path, self.drone.altitude)
+                        self.path_index = 0
+                    else:
+                        print("Thất bại: Vật cản quá lớn, không thể vượt qua.")
+        else:
+            self.avoid_timer -= dt
+            if self.avoid_timer <= 0:
+                self.avoiding = False
+                self.drone.altitude = self.drone.normal_altitude
+                self.avoid_direction = 0
+                print(" Kết thúc né tránh, quay lại đường bay bình thường")
+                
         return self.avoiding
     
     def _is_out_of_bounds(self, pos):

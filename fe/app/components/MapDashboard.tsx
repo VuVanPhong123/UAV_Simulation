@@ -49,6 +49,17 @@ export default function MapDashboard() {
         }
     };
 
+    const sendCommand = (action: 'start' | 'reset') => {
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            wsRef.current.send(JSON.stringify({ type: 'command', action }));
+            
+            if (action === 'reset') {
+                setDynamicObstacles([]);
+                setPathHistory([]);
+            }
+        }
+    };
+
     const defaultCenter: [number, number] = [21.0285, 105.8542];
     const mapCenter = mapConfig ? mapConfig.start : defaultCenter;
 
@@ -69,6 +80,22 @@ export default function MapDashboard() {
 
             <div className="w-64 border-r border-slate-200 p-6 z-[1000] bg-slate-50 flex flex-col gap-6">
                 <h2 className="text-lg font-bold border-b pb-2 text-slate-700">UAV Control</h2>
+                
+                <div className="flex flex-col gap-3">
+                    <button 
+                        onClick={() => sendCommand('start')}
+                        className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded shadow-sm transition-all"
+                    >
+                        BAT DAU BAY
+                    </button>
+                    <button 
+                        onClick={() => sendCommand('reset')}
+                        className="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-2 px-4 rounded shadow-sm transition-all"
+                    >
+                        LAM MOI (RESET)
+                    </button>
+                </div>
+
                 {droneState ? (
                     <div className="space-y-4">
                         <div className="p-3 bg-white rounded border border-slate-200">

@@ -7,7 +7,7 @@ from shapely.geometry import Point
 class WaypointGraph:
     def __init__(self, config):
         self.config = config
-        self.resolution = 10.0
+        self.resolution = 5.0
         self.safety_margin = config.get('obstacle_avoidance', {}).get('safety_margin', 5.0)
         print("Đang nạp dữ liệu tòa nhà 2.5D...")
         self.buildings = gpd.read_file('hanoi_buildings.geojson')
@@ -18,6 +18,7 @@ class WaypointGraph:
         
         print("Đang giăng lưới Không gian bay...")
         self._build_2_5d_grid(config)
+        self.dynamic_obstacles = []
         
         print(f"-> Môi trường 2.5D hoàn tất với {self.cols}x{self.rows} mắt lưới!")
 
@@ -27,6 +28,20 @@ class WaypointGraph:
             if np.hypot(x - nx, y - ny) <= (r + self.safety_margin):
                 return True
         return False
+    
+    def add_dynamic_obstacle(self, pos_utm):
+        self.dynamic_obstacles.append(pos_utm)
+
+    def is_in_dynamic_obs(self, node):
+        x, y = self.nodes.get(node, (0, 0))
+        for ox, oy in self.dynamic_obstacles:
+            if np.hypot(x - ox, y - oy) <= (3.0 + getattr(self, 'safety_margin', 5.0)):
+                return True
+        return False
+    
+    def clear_dynamic_obstacles(self):
+        self.dynamic_obstacles = []
+        print("   [Graph] Da don dep toan bo vat can dong khoi ban do.")
     
     def _build_2_5d_grid(self, config):
         pts_gps = [config['map']['start_latlng'], config['map']['goal_latlng']]
@@ -94,27 +109,33 @@ class WaypointGraph:
         came_from = {start: None}
         cost_so_far = {start: 0}
         
-        directions = [(0,1), (1,0), (0,-1), (-1,0), (1,1), (-1,1), (1,-1), (-1,-1)]
+        directions = [
+            (0, 1, 1.0), (1, 0, 1.0), (0, -1, 1.0), (-1, 0, 1.0),
+            (1, 1, 1.4142), (-1, 1, 1.4142), (1, -1, 1.4142), (-1, -1, 1.4142)
+        ]
+        WEIGHT = 1.8 
         
         while frontier:
             _, current = heapq.heappop(frontier)
             if current == goal: break
                 
-            for dx, dy in directions:
+            for dx, dy, step_cost in directions:
                 nxt = (current[0] + dx, current[1] + dy)
                 if not (0 <= nxt[0] < self.cols and 0 <= nxt[1] < self.rows): continue
 
+                if getattr(self, 'is_in_dynamic_obs', lambda x: False)(nxt):
+                    continue
                 if self.is_in_nfz(nxt):
                     continue
                 if self.heights[nxt] >= current_altitude and nxt != goal and nxt not in self.charging_stations: 
                     continue 
                     
-                base_cost = np.hypot(dx, dy) * self.resolution
+                base_cost = step_cost * self.resolution
                 new_cost = cost_so_far[current] + base_cost
                 
                 if nxt not in cost_so_far or new_cost < cost_so_far[nxt]:
                     cost_so_far[nxt] = new_cost
-                    priority = new_cost + self.heuristic(nxt, goal)
+                    priority = new_cost + (WEIGHT * self.heuristic(nxt, goal))
                     heapq.heappush(frontier, (priority, nxt))
                     came_from[nxt] = current
                     
@@ -130,6 +151,10 @@ class WaypointGraph:
             return path
         print(f"   [A*] THẤT BẠI: Bị kẹt, không thể tìm thấy đường đi!")
         return []
+    
+    def clear_dynamic_obstacles(self):
+        self.dynamic_obstacles = []
+        print("   [Graph] Đã dọn dẹp toàn bộ vật cản động khỏi bản đồ.")
 
     def is_line_of_sight(self, node_a, node_b, altitude):
         x0, y0 = int(node_a[0]), int(node_a[1])
@@ -146,6 +171,8 @@ class WaypointGraph:
                 if self.heights.get((x0, y0), 0.0) >= altitude:
                     return False
                 if self.is_in_nfz((x0, y0)):
+                    return False
+                if self.is_in_dynamic_obs((x0, y0)):
                     return False
             if x0 == x1 and y0 == y1:
                 break
