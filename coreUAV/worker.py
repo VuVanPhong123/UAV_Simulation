@@ -12,7 +12,7 @@ def main():
     print("Dang ket noi toi Node.js Proxy...")
     ws = create_connection(WS_URL)
     ws.settimeout(0.01)
-    print("Da ket noi toi Node.js Proxy thanh cong!")
+    print("Da ket noi thanh cong!")
 
     with open('config.yaml', 'r') as f:
         config = yaml.safe_load(f)
@@ -25,7 +25,7 @@ def main():
         "no_fly_zones": config['map'].get('no_fly_zones', [])
     }
     ws.send(json.dumps(init_payload))
-    print("-> Da day cau hinh ban do (Start, Goal, Stations) sang Frontend.")
+    print("-> Da gui cau hinh ban do.")
 
     env = DeliveryEnv(config)
     obs, _ = env.reset(seed=config['simulation']['seed'])
@@ -36,10 +36,10 @@ def main():
     dt = config['simulation']['time_step']
     is_running = False
     step = 0
+    telemetry_counter = 0
+    TELEMETRY_EVERY_N_STEPS = 2
 
-    print("\n==============================================")
-    print("Worker DA SAN SANG! Dang cho lenh tu Web...")
-    print("==============================================\n")
+    print("\nWorker DA SAN SANG!\n")
 
     def send_telemetry():
         lon, lat = transformer.transform(env.drone.pos[0], env.drone.pos[1])
@@ -66,8 +66,30 @@ def main():
             "zones": shadow_gps
         }))
 
+    def send_planned_path():
+        if not env.path:
+            return
+        gps_path = []
+        
+        if env.drone.pos:
+            lon_d, lat_d = transformer.transform(env.drone.pos[0], env.drone.pos[1])
+            gps_path.append([lat_d, lon_d])
+
+        for node in env.path[env.path_index:]:
+            x, y = env.graph.nodes[node]
+            lon, lat = transformer.transform(x, y)
+            gps_path.append([lat, lon])
+            
+        ws.send(json.dumps({
+            "type": "planned_path",
+            "path": gps_path
+        }))
+
     send_telemetry()
     send_wind_shadow_zones()
+    send_planned_path()
+    
+    last_path_id = id(env.path)
 
     while True:
         try:
@@ -78,12 +100,24 @@ def main():
                 env.add_obstacle(data['pos'])
 
             elif data.get('type') == 'weather_update':
+                was_running = is_running
+                is_running = False
                 env.update_weather(
                     wind_dir=float(data['wind_dir']),
                     wind_speed=float(data['wind_speed']),
                     ambient_temp=float(data['ambient_temp'])
                 )
-                print("   [Worker] Tai cau truc quy dao theo dieu kien gio moi...")
+                print("   [Worker] Tinh lai duong theo gio moi...")
+                
+                current_x, current_y = env.drone.pos
+                cx = int(round((current_x - env.graph.min_x) / env.graph.resolution))
+                cy = int(round((current_y - env.graph.min_y) / env.graph.resolution))
+                
+                cx = max(0, min(env.graph.cols - 1, cx))
+                cy = max(0, min(env.graph.rows - 1, cy))
+                
+                env.drone.node = (cx, cy)
+
                 raw_path = env.graph.a_star(
                     env.drone.node,
                     env.graph.goal,
@@ -94,20 +128,22 @@ def main():
                 env.path = env.graph.smooth_path(raw_path, env.drone.altitude)
                 env.path_index = 0
                 send_wind_shadow_zones()
+                is_running = was_running
 
             elif data.get('type') == 'command':
                 cmd = data.get('action')
-                if cmd == 'start':
-                    if not is_running:
-                        print("Da nhan lenh BAT DAU mo phong!")
-                        is_running = True
+                if cmd == 'start' and not is_running:
+                    print("Da nhan lenh BAT DAU!")
+                    is_running = True
                 elif cmd == 'reset':
-                    print("Da nhan lenh LAM MOI (Reset) he thong!")
+                    print("Da nhan lenh RESET!")
                     is_running = False
                     env.reset()
                     step = 0
                     send_telemetry()
                     send_wind_shadow_zones()
+                    send_planned_path()
+                    last_path_id = id(env.path)
 
         except websocket.WebSocketTimeoutException:
             pass
@@ -117,10 +153,20 @@ def main():
         if is_running:
             obs, reward, terminated, truncated, info = env.step()
             step += 1
-            send_telemetry()
+            telemetry_counter += 1
+            if telemetry_counter >= TELEMETRY_EVERY_N_STEPS:
+                send_telemetry()
+                telemetry_counter = 0
+            
+            current_path_id = id(env.path)
+            if current_path_id != last_path_id:
+                print("   [Worker] Phat hien quy dao thay doi, dang gui update len UI...")
+                send_planned_path()
+                last_path_id = current_path_id
+
             time.sleep(dt)
             if terminated or truncated:
-                print("Hanh trinh ket thuc (Toi dich hoac Het pin). Chuyen ve trang thai IDLE.")
+                print("Chuyen dong ket thuc. Chuyen sang IDLE.")
                 is_running = False
         else:
             time.sleep(0.05)
