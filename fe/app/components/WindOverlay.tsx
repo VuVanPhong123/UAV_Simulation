@@ -9,7 +9,7 @@ export default function WindOverlay({ windDir, windSpeed }: WindOverlayProps) {
     if (windSpeed === 0) return null;
 
     const streaks = useMemo(() => {
-        return Array.from({ length: 25 }).map((_, i) => {
+        return Array.from({ length: 50 }).map((_, i) => {
             const baseDuration = 20 / (windSpeed + 1);
             const duration = baseDuration + Math.random() * 2;
             const delay = Math.random() * 5;
@@ -36,7 +36,7 @@ export default function WindOverlay({ windDir, windSpeed }: WindOverlayProps) {
             {streaks.map(s => (
                 <div
                     key={s.id}
-                    className="absolute bg-gradient-to-r from-transparent via-slate-400/40 to-transparent h-[1.5px] rounded-full"
+                    className="absolute bg-gradient-to-r from-transparent via-slate-400/90 to-transparent h-[1.5px] rounded-full"
                     style={{
                         top: s.top,
                         left: s.left,
