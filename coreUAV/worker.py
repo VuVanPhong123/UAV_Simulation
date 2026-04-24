@@ -65,6 +65,23 @@ def main():
             if data.get('type') == 'add_obstacle':
                 env.add_obstacle(data['pos'])
                 
+            elif data.get('type') == 'weather_update':
+                env.update_weather(
+                    wind_dir=float(data['wind_dir']),
+                    wind_speed=float(data['wind_speed']),
+                    ambient_temp=float(data['ambient_temp'])
+                )
+                print("   [Worker] Tai cau truc quy tao theo dieu kien gio moi...")
+                raw_path = env.graph.a_star(
+                    env.drone.node, 
+                    env.graph.goal, 
+                    current_altitude=env.drone.altitude,
+                    wind_dir=env.wind_dir,
+                    wind_speed=env.wind_speed
+                )
+                env.path = env.graph.smooth_path(raw_path, env.drone.altitude)
+                env.path_index = 0
+                
             elif data.get('type') == 'command':
                 cmd = data.get('action')
                 if cmd == 'start':

@@ -23,8 +23,17 @@ class DeliveryEnv(gym.Env):
         self.avoid_duration = config['obstacle_avoidance']['avoidance_duration']
         self.altitude_boost = config['obstacle_avoidance']['altitude_boost']
         self.turn_angle = config['obstacle_avoidance']['turn_angle']
+        self.wind_dir = 0.0
+        self.wind_speed = 0.0
+        self.ambient_temp = 25.0
         
         self.reset()
+    
+    def update_weather(self, wind_dir, wind_speed, ambient_temp):
+        self.wind_dir = wind_dir
+        self.wind_speed = wind_speed
+        self.ambient_temp = ambient_temp
+        print(f"   [Env] Cap nhat thoi tiet: Gio {wind_speed}m/s, Huong {wind_dir}°, Temp {ambient_temp}°C")
     
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -44,7 +53,13 @@ class DeliveryEnv(gym.Env):
         self.avoid_direction = 0
         
         print("Dang tinh toan quy dao goc...")
-        raw_path = self.graph.a_star(self.graph.start, self.graph.goal, current_altitude=self.drone.altitude)
+        raw_path = self.graph.a_star(
+            self.graph.start, 
+            self.graph.goal, 
+            current_altitude=self.drone.altitude,
+            wind_dir=self.wind_dir,
+            wind_speed=self.wind_speed
+        )
         self.path = self.graph.smooth_path(raw_path, self.drone.altitude)
         
         self.path_index = 0
@@ -93,7 +108,7 @@ class DeliveryEnv(gym.Env):
                 cy = max(0, min(self.graph.rows - 1, cy))
                 
                 self.drone.node = (cx, cy)
-                raw_path = self.graph.a_star(self.drone.node, self.graph.goal, self.drone.altitude)
+                raw_path = self.graph.a_star(self.drone.node, self.graph.goal, self.drone.altitude, wind_dir=self.wind_dir, wind_speed=self.wind_speed)
 
                 if raw_path:
                     self.path = self.graph.smooth_path(raw_path, self.drone.altitude)
@@ -103,7 +118,7 @@ class DeliveryEnv(gym.Env):
                     print("KHẨN CẤP: Hết đường lách! Bật chế độ Pop-up (Vọt lên cao)...")
                     self.drone.altitude = min(self.drone.max_altitude, self.drone.altitude + self.altitude_boost)
                     
-                    raw_path = self.graph.a_star(self.drone.node, self.graph.goal, self.drone.altitude)
+                    raw_path = self.graph.a_star(self.drone.node, self.graph.goal, self.drone.altitude, wind_dir=self.wind_dir, wind_speed=self.wind_speed)
                     if raw_path:
                         self.path = self.graph.smooth_path(raw_path, self.drone.altitude)
                         self.path_index = 0
@@ -132,11 +147,11 @@ class DeliveryEnv(gym.Env):
         
         if self.drone.status == "charging":
             self.drone.recharge(dt)
-            self.drone.update_temperature(dt)
+            self.drone.update_temperature(dt, self.ambient_temp)
             if self.drone.status == "flying":
                 print(f"Sạc xong, pin {self.drone.battery:.1f}%, tiếp tục bay đến goal")
                 
-                raw_path = self.graph.a_star(self.drone.node, self.graph.goal, current_altitude=self.drone.altitude)
+                raw_path = self.graph.a_star(self.drone.node, self.graph.goal, current_altitude=self.drone.altitude, wind_dir=self.wind_dir, wind_speed=self.wind_speed)
                 self.path = self.graph.smooth_path(raw_path, self.drone.altitude)
                 
                 self.path_index = 0
@@ -151,14 +166,14 @@ class DeliveryEnv(gym.Env):
                 s_pos = self.graph.nodes[station_node]
                 dist = np.hypot(self.drone.pos[0] - s_pos[0], self.drone.pos[1] - s_pos[1])
                 if dist < min_dist:
-                    path_check = self.graph.a_star(self.drone.node, station_node, self.drone.altitude)
+                    path_check = self.graph.a_star(self.drone.node, station_node, self.drone.altitude, wind_dir=self.wind_dir, wind_speed=self.wind_speed)
                     if path_check:
                         min_dist = dist
                         nearest_station = station_node
                         
             if nearest_station:
                 self.charging_mode = True
-                raw_path = self.graph.a_star(self.drone.node, nearest_station, self.drone.altitude)
+                raw_path = self.graph.a_star(self.drone.node, nearest_station, self.drone.altitude, wind_dir=self.wind_dir, wind_speed=self.wind_speed)
                 self.path = self.graph.smooth_path(raw_path, self.drone.altitude)
                 self.path_index = 0
         

@@ -102,8 +102,57 @@ class WaypointGraph:
     def heuristic(self, a, b):
         return np.hypot(a[0]-b[0], a[1]-b[1]) * self.resolution
 
-    def a_star(self, start, goal, current_altitude=20.0):
-        print(f"   [A*] Bắt đầu quét từ node {start} đến {goal}...")
+    def check_wind_shadow(self, node, wind_dir_deg, altitude, shadow_length=5):
+        reverse_wind_rad = np.radians((wind_dir_deg + 180) % 360)
+        dx = np.cos(reverse_wind_rad)
+        dy = np.sin(reverse_wind_rad)
+        
+        curr_x, curr_y = node
+        
+        for step in range(1, shadow_length + 1):
+            check_x = int(curr_x + dx * step)
+            check_y = int(curr_y + dy * step)
+            
+            if not (0 <= check_x < self.cols and 0 <= check_y < self.rows):
+                break
+            if self.heights.get((check_x, check_y), 0.0) >= altitude:
+                return True
+                
+        return False
+
+    def get_energy_multiplier(self, current, nxt, wind_dir_deg, wind_speed, altitude):
+        """
+        Tính toán hệ số tiêu hao năng lượng dựa trên Tích vô hướng (Dot Product).
+        """
+        if wind_speed <= 0:
+            return 1.0 # Không có gió
+            
+        move_x = nxt[0] - current[0]
+        move_y = nxt[1] - current[1]
+        dist = np.hypot(move_x, move_y)
+        if dist == 0: return 1.0
+        
+        uv_x = move_x / dist
+        uv_y = move_y / dist
+        
+        wind_rad = np.radians(wind_dir_deg)
+        w_x = np.cos(wind_rad)
+        w_y = np.sin(wind_rad)
+        
+        wind_impact = (uv_x * w_x) + (uv_y * w_y)
+        
+        is_shielded = self.check_wind_shadow(current, wind_dir_deg, altitude)
+        
+        effective_wind_speed = wind_speed * 0.2 if is_shielded else wind_speed
+        
+        penalty_coefficient = 0.05
+        
+        energy_multiplier = 1.0 - (wind_impact * effective_wind_speed * penalty_coefficient)
+        
+        return max(0.1, energy_multiplier)
+
+    def a_star(self, start, goal, current_altitude=20.0, wind_dir=0.0, wind_speed=0.0):
+        print(f"   [A*] Tìm đường Energy-Aware từ {start} đến {goal} | Gió {wind_speed}m/s hướng {wind_dir}°")
         frontier = []
         heapq.heappush(frontier, (0, start))
         came_from = {start: None}
@@ -119,7 +168,7 @@ class WaypointGraph:
             _, current = heapq.heappop(frontier)
             if current == goal: break
                 
-            for dx, dy, step_cost in directions:
+            for dx, dy, step_dist in directions:
                 nxt = (current[0] + dx, current[1] + dy)
                 if not (0 <= nxt[0] < self.cols and 0 <= nxt[1] < self.rows): continue
 
@@ -130,8 +179,10 @@ class WaypointGraph:
                 if self.heights[nxt] >= current_altitude and nxt != goal and nxt not in self.charging_stations: 
                     continue 
                     
-                base_cost = step_cost * self.resolution
-                new_cost = cost_so_far[current] + base_cost
+                energy_multiplier = self.get_energy_multiplier(current, nxt, wind_dir, wind_speed, current_altitude)
+                
+                step_energy_cost = (step_dist * self.resolution) * energy_multiplier
+                new_cost = cost_so_far[current] + step_energy_cost
                 
                 if nxt not in cost_so_far or new_cost < cost_so_far[nxt]:
                     cost_so_far[nxt] = new_cost
