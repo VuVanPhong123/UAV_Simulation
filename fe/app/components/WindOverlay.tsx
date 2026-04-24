@@ -12,7 +12,7 @@ export default function WindOverlay({ windDir, windSpeed }: WindOverlayProps) {
         return Array.from({ length: 50 }).map((_, i) => {
             const baseDuration = 20 / (windSpeed + 1);
             const duration = baseDuration + Math.random() * 2;
-            const delay = Math.random() * 5;
+            const delay = Math.random() / 2;
             
             return {
                 id: i,

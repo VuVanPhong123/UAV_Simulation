@@ -256,3 +256,12 @@ class WaypointGraph:
             
         print(f"   [Làm mịn] Rút gọn từ {len(raw_path)} node xuống còn {len(smoothed)} node.")
         return smoothed
+    def get_wind_shadow_nodes(self, wind_dir_deg, altitude, shadow_length=5):
+        shadow_nodes = []
+        for i in range(self.cols):
+            for j in range(self.rows):
+                node = (i, j)
+                if self.check_wind_shadow(node, wind_dir_deg, altitude, shadow_length):
+                    x, y = self.nodes[node]
+                    shadow_nodes.append((x, y))
+        return shadow_nodes
