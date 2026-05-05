@@ -3,6 +3,8 @@ import { useEffect, useState, useRef, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 import 'leaflet/dist/leaflet.css';
 import WindOverlay from './WindOverlay';
+import type { Feature, GeoJsonObject, GeoJsonProperties, Geometry } from 'geojson';
+import type { Layer } from 'leaflet';
 
 const MapContainer = dynamic(() => import('react-leaflet').then(mod => mod.MapContainer), { ssr: false });
 const TileLayer = dynamic(() => import('react-leaflet').then(mod => mod.TileLayer), { ssr: false });
@@ -13,11 +15,49 @@ const Tooltip = dynamic(() => import('react-leaflet').then(mod => mod.Tooltip), 
 const Circle = dynamic(() => import('react-leaflet').then(mod => mod.Circle), { ssr: false });
 const MapEvents = dynamic(() => import('./MapEvents'), { ssr: false });
 
+type LatLng = [number, number];
+
+type TelemetryState = {
+    pos?: LatLng;
+    battery?: number;
+    batteryPercent?: number;
+    altitude?: number;
+    speed?: number;
+    heading?: number;
+    temperature?: number;
+    status?: string;
+    step?: number;
+};
+
+type MapConfig = {
+    start: LatLng;
+    goal: LatLng;
+    charging_stations?: LatLng[];
+    no_fly_zones?: { center: LatLng; radius: number }[];
+};
+
+type EventLog = {
+    timestamp?: number;
+    level: string;
+    code: string;
+    message: string;
+};
+
+type IncomingMessage = {
+    type?: string;
+    timestamp?: number;
+    payload?: TelemetryState & { zones?: LatLng[]; path?: LatLng[]; level?: string; code?: string; message?: string };
+    pos?: LatLng;
+    zones?: LatLng[];
+    path?: LatLng[];
+};
+
 export default function MapDashboard() {
-    const [buildings, setBuildings] = useState<any>(null);
-    const [droneState, setDroneState] = useState<any>(null);
-    const [mapConfig, setMapConfig] = useState<any>(null);
+    const [buildings, setBuildings] = useState<GeoJsonObject | null>(null);
+    const [droneState, setDroneState] = useState<TelemetryState | null>(null);
+    const [mapConfig, setMapConfig] = useState<MapConfig | null>(null);
     const [pathHistory, setPathHistory] = useState<[number, number][]>([]);
+    const [eventLogs, setEventLogs] = useState<EventLog[]>([]);
 
     const [plannedPath, setPlannedPath] = useState<[number, number][]>([]);
 
@@ -35,20 +75,35 @@ export default function MapDashboard() {
         wsRef.current = ws;
 
         ws.onmessage = (event) => {
-            const data = JSON.parse(event.data);
+            const data = JSON.parse(event.data) as IncomingMessage & MapConfig;
             if (data.type === 'config') {
                 setMapConfig(data);
                 setPathHistory([]);
             } else if (data.type === 'telemetry') {
-                setDroneState(data);
-                if (data.pos) {
-                    setPathHistory(prev => [...prev.slice(-300), [data.pos[0], data.pos[1]]]);
+                const telemetry = data.payload ?? data;
+                setDroneState(telemetry);
+                const pos = telemetry.pos;
+                if (pos) {
+                    setPathHistory(prev => [...prev.slice(-300), [pos[0], pos[1]]]);
                 }
             } else if (data.type === 'wind_shadow_zones') {
-                setWindShadowZones(data.zones);
+                const zones = data.payload?.zones ?? data.zones ?? [];
+                setWindShadowZones(zones);
             }
             else if (data.type === 'planned_path') {
-                setPlannedPath(data.path);
+                const path = data.payload?.path ?? data.path ?? [];
+                setPlannedPath(path);
+            } else if (data.type === 'event') {
+                const eventPayload = data.payload ?? {};
+                setEventLogs(prev => [
+                    {
+                        timestamp: data.timestamp,
+                        level: eventPayload.level ?? "info",
+                        code: eventPayload.code ?? "UNKNOWN",
+                        message: eventPayload.message ?? ""
+                    },
+                    ...prev
+                ].slice(0, 50));
             }
         };
 
@@ -70,7 +125,7 @@ export default function MapDashboard() {
         }
     };
 
-    const handleWeatherChange = (key: string, value: number) => {
+    const handleWeatherChange = (key: keyof typeof weather, value: number) => {
         setWeather(prev => ({ ...prev, [key]: value }));
     };
 
@@ -80,6 +135,13 @@ export default function MapDashboard() {
 
     const defaultCenter: [number, number] = [21.0285, 105.8542];
     const mapCenter = mapConfig ? mapConfig.start : defaultCenter;
+    const battery = droneState?.batteryPercent ?? droneState?.battery;
+    const eventLevelClass = (level: string) => {
+        if (level === 'error') return 'text-red-600';
+        if (level === 'warning') return 'text-amber-600';
+        if (level === 'success') return 'text-emerald-600';
+        return 'text-slate-600';
+    };
 
     const sampledZones = useMemo(() => {
         if (windShadowZones.length <= 2000) return windShadowZones;
@@ -91,13 +153,13 @@ export default function MapDashboard() {
         return (
             <>
                 <TileLayer url="https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png" />
-                {buildings && <GeoJSON data={buildings} style={() => ({ color: '#94a3b8', weight: 1, fillColor: '#e2e8f0', fillOpacity: 0.6 })} onEachFeature={(feature, layer) => { if (feature.properties?.estimated_height) layer.bindTooltip(`${feature.properties.estimated_height}m`, { permanent: true, direction: 'center', className: 'building-label' }); }} />}
+                {buildings && <GeoJSON data={buildings} style={() => ({ color: '#94a3b8', weight: 1, fillColor: '#e2e8f0', fillOpacity: 0.6 })} onEachFeature={(feature: Feature<Geometry, GeoJsonProperties>, layer: Layer) => { if (feature.properties?.estimated_height) layer.bindTooltip(`${feature.properties.estimated_height}m`, { permanent: true, direction: 'center', className: 'building-label' }); }} />}
 
                 {mapConfig && (
                     <>
                         <CircleMarker center={mapConfig.start} radius={6} pathOptions={{ color: 'green', fillColor: 'green', fillOpacity: 1 }}><Tooltip>START</Tooltip></CircleMarker>
                         <CircleMarker center={mapConfig.goal} radius={6} pathOptions={{ color: 'red', fillColor: 'red', fillOpacity: 1 }}><Tooltip>GOAL</Tooltip></CircleMarker>
-                        {mapConfig.no_fly_zones?.map((nfz: any, idx: number) => <Circle key={`nfz-${idx}`} center={nfz.center} radius={nfz.radius} pathOptions={{ color: '#ef4444', fillColor: '#ef4444', fillOpacity: 0.2, dashArray: '5,5' }}><Tooltip direction="center" permanent className="building-label !text-red-700 !bg-transparent">NO FLY ZONE</Tooltip></Circle>)}
+                        {mapConfig.no_fly_zones?.map((nfz, idx: number) => <Circle key={`nfz-${idx}`} center={nfz.center} radius={nfz.radius} pathOptions={{ color: '#ef4444', fillColor: '#ef4444', fillOpacity: 0.2, dashArray: '5,5' }}><Tooltip direction="center" permanent className="building-label !text-red-700 !bg-transparent">NO FLY ZONE</Tooltip></Circle>)}
                         {mapConfig.charging_stations?.map((pos: [number, number], idx: number) => <CircleMarker key={idx} center={pos} radius={5} pathOptions={{ color: '#eab308', fillColor: '#eab308', fillOpacity: 1 }}><Tooltip permanent className="building-label" direction="top">Tram {idx + 1}</Tooltip></CircleMarker>)}
                     </>
                 )}
@@ -135,9 +197,32 @@ export default function MapDashboard() {
                 {droneState ? (
                     <div className="space-y-4">
                         <div className="p-3 bg-white rounded border border-slate-200"><p className="text-[10px] uppercase font-bold text-slate-400">Trang thai</p><p className="font-mono text-blue-600 font-bold">{droneState.status}</p></div>
-                        <div className="p-3 bg-white rounded border border-slate-200"><p className="text-[10px] uppercase font-bold text-slate-400">Pin / Do cao</p><p className="font-mono font-bold text-slate-700">{droneState.battery.toFixed(1)}% / {droneState.altitude}m</p></div>
+                        <div className="p-3 bg-white rounded border border-slate-200">
+                            <p className="text-[10px] uppercase font-bold text-slate-400">Telemetry</p>
+                            <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 font-mono text-xs font-bold text-slate-700">
+                                <span>Pin</span><span>{battery !== undefined ? Number(battery).toFixed(1) : '--'}%</span>
+                                <span>Do cao</span><span>{droneState.altitude ?? '--'}m</span>
+                                <span>Toc do</span><span>{droneState.speed ?? '--'}m/s</span>
+                                <span>Heading</span><span>{droneState.heading !== undefined ? Number(droneState.heading).toFixed(1) : '--'}°</span>
+                                <span>Nhiet do</span><span>{droneState.temperature !== undefined ? Number(droneState.temperature).toFixed(1) : '--'}°C</span>
+                                <span>Step</span><span>{droneState.step ?? '--'}</span>
+                            </div>
+                        </div>
                     </div>
                 ) : <p className="italic text-slate-400 text-sm">Dang cho telemetry...</p>}
+                <div className="p-3 bg-white rounded border border-slate-200 min-h-0">
+                    <h3 className="text-sm font-bold text-slate-700 border-b pb-2">Event Log</h3>
+                    <div className="mt-2 flex max-h-56 flex-col gap-2 overflow-y-auto">
+                        {eventLogs.slice(0, 10).map((log, idx) => (
+                            <div key={`${log.timestamp ?? 'event'}-${idx}`} className="text-xs leading-snug">
+                                <span className={`font-bold uppercase ${eventLevelClass(log.level)}`}>{log.level}</span>
+                                <span className="font-mono text-slate-500"> {log.code}</span>
+                                <p className="text-slate-700">{log.message}</p>
+                            </div>
+                        ))}
+                        {eventLogs.length === 0 && <p className="italic text-slate-400 text-sm">Chua co event...</p>}
+                    </div>
+                </div>
             </div>
 
             <div className="flex-1 relative overflow-hidden bg-slate-100">
@@ -163,7 +248,7 @@ export default function MapDashboard() {
                     {sampledZones.map((pos, idx) => <CircleMarker key={`shadow-${idx}`} center={pos} radius={2} pathOptions={{ color: '#22c55e', fillColor: '#22c55e', fillOpacity: 0.5 }} />)}
                     {dynamicObstacles.map((pos, idx) => <Circle key={`dyn-obs-${idx}`} center={pos} radius={2} pathOptions={{ color: '#f97316', fillColor: '#f97316', fillOpacity: 0.5 }} />)}
 
-                    {droneState && (
+                    {droneState?.pos && (
                         <>
                             <Circle center={droneState.pos} radius={30} pathOptions={{ color: '#60a5fa', fillColor: '#93c5fd', fillOpacity: 0.15, weight: 1, dashArray: '4,4' }} />
                             <CircleMarker center={droneState.pos} radius={8} pathOptions={{ color: '#2563eb', fillColor: '#2563eb', fillOpacity: 1, weight: 2 }}><Tooltip permanent direction="bottom" className="building-label">UAV</Tooltip></CircleMarker>

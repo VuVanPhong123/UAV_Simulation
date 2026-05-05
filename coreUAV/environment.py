@@ -2,6 +2,7 @@ import gymnasium as gym
 import numpy as np
 from graph_map import WaypointGraph
 from drone import Drone
+from statuses import DroneStatus
 
 class DeliveryEnv(gym.Env):
     def __init__(self, config):
@@ -42,7 +43,7 @@ class DeliveryEnv(gym.Env):
         self.graph.clear_dynamic_obstacles()
 
         self.drone.battery = self.drone.max_battery
-        self.drone.status = "flying"
+        self.drone.status = DroneStatus.PLANNING.value
         self.drone.pos = self.graph.nodes[self.graph.start]
         self.drone.node = self.graph.start
         self.drone.altitude = self.drone.normal_altitude
@@ -61,6 +62,7 @@ class DeliveryEnv(gym.Env):
             wind_speed=self.wind_speed
         )
         self.path = self.graph.smooth_path(raw_path, self.drone.altitude)
+        self.drone.status = DroneStatus.FLYING.value if self.path else DroneStatus.FAILED.value
 
         self.path_index = 0
         self.step_count = 0
@@ -76,9 +78,14 @@ class DeliveryEnv(gym.Env):
         return {
             "pos": self.drone.pos,
             "battery": self.drone.battery,
+            "batteryPercent": self.drone.battery,
             "altitude": self.drone.altitude,
+            "speed": self.drone.speed,
+            "heading": self.drone.heading,
             "temperature": self.drone.temperature,
             "status": self.drone.status,
+            "mode": "delivery",
+            "energyConsumed": self.drone.max_battery - self.drone.battery,
             "node": self.drone.node,
             "step": self.step_count
         }
@@ -100,6 +107,7 @@ class DeliveryEnv(gym.Env):
             if self._detect_obstacle():
                 print("CẢNH BÁO: Radar phát hiện vật cản động! Đang tính toán lại quỹ đạo...")
                 self.avoiding = True
+                self.drone.status = DroneStatus.REROUTING.value
 
                 cx = int(round((self.drone.pos[0] - self.graph.min_x) / self.graph.resolution))
                 cy = int(round((self.drone.pos[1] - self.graph.min_y) / self.graph.resolution))
@@ -113,6 +121,7 @@ class DeliveryEnv(gym.Env):
                 if raw_path:
                     self.path = self.graph.smooth_path(raw_path, self.drone.altitude)
                     self.path_index = 0
+                    self.drone.status = DroneStatus.FLYING.value
                     print("Đã chốt quỹ đạo mới lách qua vật cản!")
                 else:
                     print("KHẨN CẤP: Hết đường lách! Bật chế độ Pop-up (Vọt lên cao)...")
@@ -122,7 +131,9 @@ class DeliveryEnv(gym.Env):
                     if raw_path:
                         self.path = self.graph.smooth_path(raw_path, self.drone.altitude)
                         self.path_index = 0
+                        self.drone.status = DroneStatus.FLYING.value
                     else:
+                        self.drone.status = DroneStatus.FAILED.value
                         print("Thất bại: Vật cản quá lớn, không thể vượt qua.")
         else:
             self.avoid_timer -= dt
@@ -145,15 +156,17 @@ class DeliveryEnv(gym.Env):
 
         avoiding = self._handle_avoidance(dt)
 
-        if self.drone.status == "charging":
+        if self.drone.status == DroneStatus.CHARGING.value:
             self.drone.recharge(dt)
             self.drone.update_temperature(dt, self.ambient_temp)
-            if self.drone.status == "flying":
+            if self.drone.status == DroneStatus.FLYING.value:
                 print(f"Sac xong, pin {self.drone.battery:.1f}%, tiep tuc bay den goal")
+                self.drone.status = DroneStatus.PLANNING.value
                 raw_path = self.graph.a_star(self.drone.node, self.graph.goal, current_altitude=self.drone.altitude, wind_dir=self.wind_dir, wind_speed=self.wind_speed)
                 self.path = self.graph.smooth_path(raw_path, self.drone.altitude)
                 self.path_index = 0
                 self.charging_mode = False
+                self.drone.status = DroneStatus.FLYING.value if self.path else DroneStatus.FAILED.value
             return self._get_obs(), 0, terminated, truncated, {}
 
         if self.drone.battery < self.drone.low_threshold and not self.charging_mode:
@@ -169,9 +182,11 @@ class DeliveryEnv(gym.Env):
                         nearest_station = station_node
             if nearest_station:
                 self.charging_mode = True
+                self.drone.status = DroneStatus.PLANNING.value
                 raw_path = self.graph.a_star(self.drone.node, nearest_station, self.drone.altitude, wind_dir=self.wind_dir, wind_speed=self.wind_speed)
                 self.path = self.graph.smooth_path(raw_path, self.drone.altitude)
                 self.path_index = 0
+                self.drone.status = DroneStatus.CHARGING.value if self.path else DroneStatus.FAILED.value
 
         if self.path and self.path_index < len(self.path) - 1:
             next_node = self.path[self.path_index + 1]
@@ -196,13 +211,15 @@ class DeliveryEnv(gym.Env):
         else:
             if self.drone.node != self.graph.goal:
                 print("Het path nhung chua den goal!")
+                self.drone.status = DroneStatus.FAILED.value
                 terminated = True
 
         if self.drone.node == self.graph.goal and not self.charging_mode:
             terminated = True
+            self.drone.status = DroneStatus.SUCCESS.value
             print("Giao hang thanh cong!")
 
-        if self.drone.status == "flying":
+        if self.drone.status == DroneStatus.FLYING.value:
             climbing = (self.drone.altitude > self.drone.normal_altitude)
             is_shielded = self.graph.check_wind_shadow(
                 self.drone.node, self.wind_dir, self.drone.altitude
@@ -217,11 +234,14 @@ class DeliveryEnv(gym.Env):
 
         if self.drone.battery <= 0:
             terminated = True
+            self.drone.status = DroneStatus.FAILED.value
             print("Het pin! Giao hang that bai.")
 
         self.drone.update_temperature(dt, self.ambient_temp)
 
         if self.step_count >= self.max_steps:
             truncated = True
+            if self.drone.status != DroneStatus.SUCCESS.value:
+                self.drone.status = DroneStatus.FAILED.value
 
         return self._get_obs(), 0, terminated, truncated, {}

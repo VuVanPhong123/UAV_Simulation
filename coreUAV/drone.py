@@ -1,4 +1,5 @@
 import numpy as np
+from statuses import DroneStatus
 
 class Drone:
     def __init__(self, config):
@@ -22,7 +23,7 @@ class Drone:
         self.temperature = 30.0
         self.optimal_temp = 25.0
         self.temp_sensitivity = 0.002
-        self.status = "flying"
+        self.status = DroneStatus.IDLE.value
 
     def consume_battery(self, dt, climbing=False, wind_speed=0.0, wind_dir=0.0, heading=0.0, is_shielded=False):
         rate = self.discharge_base
@@ -46,10 +47,10 @@ class Drone:
             self.battery = 0
 
     def update_temperature(self, dt, ambient_temp=30.0):
-        if self.status == "flying":
+        if self.status == DroneStatus.FLYING.value:
             target_temp = ambient_temp + 10.0
             self.temperature += (target_temp - self.temperature) * 0.05 * dt
-        elif self.status == "charging":
+        elif self.status == DroneStatus.CHARGING.value:
             self.temperature += (ambient_temp - self.temperature) * 0.1 * dt
         self.temperature = max(-10, min(60, self.temperature))
 
@@ -57,6 +58,6 @@ class Drone:
         self.battery += self.recharge_rate * dt
         if self.battery >= self.safe_target:
             self.battery = self.safe_target
-            self.status = "flying"
+            self.status = DroneStatus.FLYING.value
         else:
-            self.status = "charging"
+            self.status = DroneStatus.CHARGING.value

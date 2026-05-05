@@ -1,0 +1,34 @@
+from enum import Enum
+
+
+class DroneStatus(str, Enum):
+    IDLE = "idle"
+    PLANNING = "planning"
+    FLYING = "flying"
+    REROUTING = "rerouting"
+    CHARGING = "charging"
+    PAUSED = "paused"
+    SUCCESS = "success"
+    FAILED = "failed"
+    EMERGENCY_LANDING = "emergency_landing"
+
+
+class EventLevel(str, Enum):
+    INFO = "info"
+    WARNING = "warning"
+    ERROR = "error"
+    SUCCESS = "success"
+
+
+class EventCode(str, Enum):
+    PATH_PLANNED = "PATH_PLANNED"
+    PATH_REPLANNED = "PATH_REPLANNED"
+    OBSTACLE_ADDED = "OBSTACLE_ADDED"
+    OBSTACLE_DETECTED = "OBSTACLE_DETECTED"
+    WEATHER_CHANGED = "WEATHER_CHANGED"
+    CHARGING_STARTED = "CHARGING_STARTED"
+    CHARGING_COMPLETED = "CHARGING_COMPLETED"
+    EMERGENCY_LANDING = "EMERGENCY_LANDING"
+    DELIVERY_SUCCESS = "DELIVERY_SUCCESS"
+    DELIVERY_FAILED = "DELIVERY_FAILED"
+    WORKER_ERROR = "WORKER_ERROR"
