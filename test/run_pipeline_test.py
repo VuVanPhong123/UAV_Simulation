@@ -1,4 +1,3 @@
-import json
 import os
 import subprocess
 import sys
@@ -9,8 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SERVER_DIR = ROOT / "server"
 CORE_DIR = ROOT / "coreUAV"
-WS_URL = "ws://localhost:8080"
-websocket = None
+FAKE_CLIENT = ROOT / "test" / "fake_frontend_client.js"
 
 
 def pass_step(name):
@@ -21,16 +19,24 @@ def fail_step(name, reason):
     print(f"[FAIL] {name}: {reason}")
 
 
-def start_process(args, cwd):
-    env = os.environ.copy()
-    env["PYTHONUNBUFFERED"] = "1"
+def tail_text(text, lines=50):
+    if not text:
+        return ""
+    return "\n".join(text.splitlines()[-lines:])
+
+
+def start_process(args, cwd, env=None):
+    merged_env = os.environ.copy()
+    merged_env["PYTHONUNBUFFERED"] = "1"
+    if env:
+        merged_env.update(env)
     return subprocess.Popen(
         args,
         cwd=str(cwd),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
-        env=env
+        env=merged_env
     )
 
 
@@ -45,191 +51,85 @@ def terminate_process(proc):
         proc.wait(timeout=5)
 
 
-def process_tail(proc):
-    if proc is None or proc.stdout is None:
-        return ""
-    try:
-        return proc.stdout.read()[-2000:]
-    except Exception:
-        return ""
-
-
-def recv_until(ws, predicate, timeout_sec, step_name):
-    deadline = time.time() + timeout_sec
-    last_message = None
-    while time.time() < deadline:
-        try:
-            raw = ws.recv()
-            message = json.loads(raw)
-            last_message = message
-            if predicate(message):
-                return message
-        except websocket.WebSocketTimeoutException:
-            continue
-    raise TimeoutError(f"timeout waiting for {step_name}; last={last_message}")
-
-
 def wait_process_alive(proc, timeout_sec, name):
     deadline = time.time() + timeout_sec
     while time.time() < deadline:
         if proc.poll() is not None:
-            raise RuntimeError(f"{name} exited early with code {proc.returncode}")
+            output = proc.stdout.read() if proc.stdout else ""
+            raise RuntimeError(f"{name} exited early with code {proc.returncode}\n{tail_text(output, 30)}")
         time.sleep(0.2)
 
 
-def main():
-    global websocket
+def collect_output(proc):
+    if proc is None or proc.stdout is None:
+        return ""
     try:
-        import websocket as websocket_module
-        websocket = websocket_module
-    except ModuleNotFoundError as exc:
-        fail_step("pipeline test", f"missing Python dependency: {exc.name}. Install coreUAV requirements first.")
-        return 1
+        return proc.stdout.read()
+    except Exception:
+        return ""
 
+
+def main():
     server_proc = None
     worker_proc = None
-    ws = None
+    fake_proc = None
+
+    server_cwd = SERVER_DIR if (SERVER_DIR / "index.js").exists() else ROOT
+    server_cmd = ["node", "index.js"]
+    node_path = str(SERVER_DIR / "node_modules")
 
     try:
-        server_proc = start_process(["node", "index.js"], SERVER_DIR)
+        server_proc = start_process(server_cmd, server_cwd)
         wait_process_alive(server_proc, 2, "server")
         pass_step("server started")
 
         worker_proc = start_process([sys.executable, "worker.py"], CORE_DIR)
         wait_process_alive(worker_proc, 2, "worker")
+        pass_step("worker started")
 
-        ws = websocket.create_connection(WS_URL, timeout=1)
-        ws.send(json.dumps({
-            "type": "register",
-            "role": "frontend"
-        }))
-
-        recv_until(ws, lambda msg: msg.get("type") == "registered" and msg.get("role") == "frontend", 10, "frontend registered")
-        pass_step("frontend registered")
-
-        recv_until(
-            ws,
-            lambda msg: (
-                msg.get("type") == "worker_status" and msg.get("status") == "idle"
-            ) or (
-                msg.get("type") == "connection_state" and msg.get("workerStatus") == "idle"
-            ),
-            30,
-            "worker registered"
+        fake_proc = start_process(
+            ["node", str(FAKE_CLIENT)],
+            ROOT,
+            env={"NODE_PATH": node_path}
         )
-        pass_step("worker registered")
+        fake_output, _ = fake_proc.communicate(timeout=90)
+        print(fake_output, end="" if fake_output.endswith("\n") else "\n")
 
-        ws.send(json.dumps({
-            "type": "request_start_simulation",
-            "payload": {
-                "mapId": "hanoi_default",
-                "droneCount": 1
-            }
-        }))
+        if fake_proc.returncode != 0:
+            fail_step("pipeline test", f"fake frontend exited with code {fake_proc.returncode}")
+            print("fake frontend output tail:")
+            print(tail_text(fake_output, 50))
+            print("server output tail:")
+            print(tail_text(collect_output(server_proc), 50))
+            print("worker output tail:")
+            print(tail_text(collect_output(worker_proc), 50))
+            return 1
 
-        assigned = recv_until(ws, lambda msg: msg.get("type") == "simulation_assigned", 30, "simulation assigned")
-        sim_id = assigned["simId"]
-        pass_step("simulation assigned")
-
-        recv_until(ws, lambda msg: msg.get("type") == "config" and msg.get("simId") == sim_id, 60, "config")
-        telemetry_count = 0
-        recv_until(
-            ws,
-            lambda msg: msg.get("type") == "telemetry" and msg.get("simId") == sim_id,
-            60,
-            "telemetry received"
-        )
-        telemetry_count += 1
-        pass_step("telemetry received")
-
-        recv_until(ws, lambda msg: msg.get("type") == "planned_path" and msg.get("simId") == sim_id, 60, "planned path received")
-        pass_step("planned path received")
-
-        ws.send(json.dumps({
-            "type": "weather_update",
-            "simId": sim_id,
-            "wind_dir": 90,
-            "wind_speed": 15,
-            "ambient_temp": 35,
-            "is_raining": True,
-            "payload": {
-                "wind_dir": 90,
-                "wind_speed": 15,
-                "ambient_temp": 35,
-                "is_raining": True
-            }
-        }))
-
-        recv_until(
-            ws,
-            lambda msg: (
-                msg.get("type") == "event"
-                and msg.get("payload", {}).get("code") in ("WEATHER_CHANGED", "PATH_REPLANNED")
-            ) or (
-                msg.get("type") == "telemetry"
-                and msg.get("payload", {}).get("isRaining") is True
-            ),
-            60,
-            "weather update accepted"
-        )
-        pass_step("weather update accepted")
-
-        ws.send(json.dumps({
-            "type": "add_obstacle",
-            "simId": sim_id,
-            "payload": {
-                "pos": [21.0285, 105.8542],
-                "radius": 8,
-                "height": 25,
-                "obstacleType": "unknown"
-            }
-        }))
-
-        recv_until(
-            ws,
-            lambda msg: (
-                msg.get("type") == "event"
-                and msg.get("payload", {}).get("code") in ("OBSTACLE_ADDED", "OBSTACLE_DETECTED")
-            ) or (
-                msg.get("type") == "telemetry"
-                and msg.get("simId") == sim_id
-            ),
-            60,
-            "obstacle accepted"
-        )
-        pass_step("obstacle accepted")
-
-        ws.send(json.dumps({
-            "type": "command",
-            "simId": sim_id,
-            "action": "reset"
-        }))
-
-        recv_until(
-            ws,
-            lambda msg: msg.get("type") == "telemetry" and msg.get("simId") == sim_id,
-            60,
-            "reset accepted"
-        )
-        pass_step("reset accepted")
-        pass_step("pipeline test completed")
         return 0
 
+    except subprocess.TimeoutExpired:
+        if fake_proc:
+            fake_proc.kill()
+            fake_output, _ = fake_proc.communicate()
+        else:
+            fake_output = ""
+        fail_step("pipeline test", "fake frontend timed out")
+        print("fake frontend output tail:")
+        print(tail_text(fake_output, 50))
+        print("server output tail:")
+        print(tail_text(collect_output(server_proc), 50))
+        print("worker output tail:")
+        print(tail_text(collect_output(worker_proc), 50))
+        return 1
     except Exception as exc:
         fail_step("pipeline test", str(exc))
-        if worker_proc and worker_proc.poll() is not None:
-            print("worker output:")
-            print(process_tail(worker_proc))
-        if server_proc and server_proc.poll() is not None:
-            print("server output:")
-            print(process_tail(server_proc))
+        print("server output tail:")
+        print(tail_text(collect_output(server_proc), 50))
+        print("worker output tail:")
+        print(tail_text(collect_output(worker_proc), 50))
         return 1
     finally:
-        if ws is not None:
-            try:
-                ws.close()
-            except Exception:
-                pass
+        terminate_process(fake_proc)
         terminate_process(worker_proc)
         terminate_process(server_proc)
 
