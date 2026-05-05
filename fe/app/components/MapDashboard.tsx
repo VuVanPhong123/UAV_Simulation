@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState, useRef, useMemo } from 'react';
+import { useCallback, useEffect, useState, useRef, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 import 'leaflet/dist/leaflet.css';
 import WindOverlay from './WindOverlay';
@@ -46,11 +46,25 @@ type EventLog = {
 type IncomingMessage = {
     type?: string;
     timestamp?: number;
-    payload?: TelemetryState & { zones?: LatLng[]; path?: LatLng[]; level?: string; code?: string; message?: string };
+    role?: string;
+    clientId?: string;
+    server?: string;
+    workerStatus?: WorkerStatus;
+    activeSimId?: string | null;
+    simId?: string | null;
+    workerId?: string;
+    status?: string;
+    message?: string;
+    latencyMs?: number;
+    payload?: TelemetryState & { zones?: LatLng[]; path?: LatLng[]; level?: string; code?: string; message?: string; status?: string };
     pos?: LatLng;
     zones?: LatLng[];
     path?: LatLng[];
 };
+
+type ServerStatus = 'connecting' | 'connected' | 'disconnected';
+type WorkerStatus = 'idle' | 'busy' | 'disconnected' | 'error' | 'unknown';
+type SimulationStatus = 'idle' | 'running' | 'stopped' | 'failed';
 
 export default function MapDashboard() {
     const [buildings, setBuildings] = useState<GeoJsonObject | null>(null);
@@ -64,7 +78,25 @@ export default function MapDashboard() {
     const [dynamicObstacles, setDynamicObstacles] = useState<[number, number][]>([]);
     const [windShadowZones, setWindShadowZones] = useState<[number, number][]>([]);
     const [weather, setWeather] = useState({ wind_dir: 0, wind_speed: 0, ambient_temp: 25 });
+    const [serverStatus, setServerStatus] = useState<ServerStatus>('connecting');
+    const [workerStatus, setWorkerStatus] = useState<WorkerStatus>('unknown');
+    const [simulationStatus, setSimulationStatus] = useState<SimulationStatus>('idle');
+    const [activeSimId, setActiveSimId] = useState<string | null>(null);
+    const [latencyMs, setLatencyMs] = useState<number | null>(null);
+    const [frontendId, setFrontendId] = useState<string | null>(null);
     const wsRef = useRef<WebSocket | null>(null);
+
+    const addEventLog = useCallback((level: string, code: string, message: string, timestamp?: number) => {
+        setEventLogs(prev => [
+            {
+                timestamp: timestamp ?? Date.now(),
+                level,
+                code,
+                message
+            },
+            ...prev
+        ].slice(0, 50));
+    }, []);
 
     useEffect(() => {
         fetch('/hanoi_buildings.geojson')
@@ -74,9 +106,45 @@ export default function MapDashboard() {
         const ws = new WebSocket('ws://localhost:8080');
         wsRef.current = ws;
 
+        ws.onopen = () => {
+            setServerStatus('connected');
+            ws.send(JSON.stringify({
+                type: 'register',
+                role: 'frontend'
+            }));
+        };
+
         ws.onmessage = (event) => {
             const data = JSON.parse(event.data) as IncomingMessage & MapConfig;
-            if (data.type === 'config') {
+            if (data.type === 'registered') {
+                setFrontendId(data.clientId ?? null);
+            } else if (data.type === 'connection_state') {
+                setServerStatus(data.server === 'connected' ? 'connected' : 'disconnected');
+                setWorkerStatus(data.workerStatus ?? 'unknown');
+                setActiveSimId(data.activeSimId ?? null);
+                setSimulationStatus(data.activeSimId ? 'running' : 'idle');
+            } else if (data.type === 'worker_status') {
+                const status = (data.status ?? data.payload?.status ?? 'unknown') as WorkerStatus;
+                setWorkerStatus(status);
+            } else if (data.type === 'simulation_assigned') {
+                setActiveSimId(data.simId ?? null);
+                setSimulationStatus('running');
+                addEventLog('info', 'SIMULATION_ASSIGNED', `Simulation assigned to worker ${data.workerId ?? '-'}.`, data.timestamp);
+            } else if (data.type === 'worker_busy') {
+                setSimulationStatus('idle');
+                addEventLog('warning', 'WORKER_BUSY', data.message ?? 'Không có worker rảnh để chạy simulation.', data.timestamp);
+            } else if (data.type === 'simulation_finished') {
+                const finishedStatus = data.payload?.status;
+                setSimulationStatus(finishedStatus === 'success' ? 'stopped' : 'failed');
+                setActiveSimId(null);
+            } else if (data.type === 'ping') {
+                ws.send(JSON.stringify({
+                    type: 'pong',
+                    timestamp: data.timestamp
+                }));
+            } else if (data.type === 'latency_update') {
+                setLatencyMs(data.latencyMs ?? null);
+            } else if (data.type === 'config') {
                 setMapConfig(data);
                 setPathHistory([]);
             } else if (data.type === 'telemetry') {
@@ -95,28 +163,56 @@ export default function MapDashboard() {
                 setPlannedPath(path);
             } else if (data.type === 'event') {
                 const eventPayload = data.payload ?? {};
-                setEventLogs(prev => [
-                    {
-                        timestamp: data.timestamp,
-                        level: eventPayload.level ?? "info",
-                        code: eventPayload.code ?? "UNKNOWN",
-                        message: eventPayload.message ?? ""
-                    },
-                    ...prev
-                ].slice(0, 50));
+                addEventLog(
+                    eventPayload.level ?? "info",
+                    eventPayload.code ?? "UNKNOWN",
+                    eventPayload.message ?? "",
+                    data.timestamp
+                );
             }
         };
 
+        ws.onclose = () => {
+            setServerStatus('disconnected');
+            setWorkerStatus('disconnected');
+            setSimulationStatus('stopped');
+            setActiveSimId(null);
+        };
+
+        ws.onerror = () => {
+            setServerStatus('disconnected');
+        };
+
         return () => ws.close();
-    }, []);
+    }, [addEventLog]);
 
     const handleMapClick = (latlng: [number, number]) => {
+        if (!activeSimId) {
+            addEventLog('warning', 'NO_ACTIVE_SIMULATION', 'Start a simulation before adding obstacles.');
+            return;
+        }
         setDynamicObstacles(prev => [...prev, latlng]);
-        wsRef.current?.send(JSON.stringify({ type: 'add_obstacle', pos: latlng }));
+        wsRef.current?.send(JSON.stringify({ type: 'add_obstacle', simId: activeSimId, pos: latlng }));
     };
 
     const sendCommand = (action: 'start' | 'reset') => {
-        wsRef.current?.send(JSON.stringify({ type: 'command', action }));
+        if (action === 'start') {
+            wsRef.current?.send(JSON.stringify({
+                type: 'request_start_simulation',
+                payload: {
+                    mapId: 'hanoi_default',
+                    droneCount: 1
+                }
+            }));
+            return;
+        }
+
+        if (!activeSimId) {
+            addEventLog('warning', 'NO_ACTIVE_SIMULATION', 'No active simulation to reset.');
+            return;
+        }
+
+        wsRef.current?.send(JSON.stringify({ type: 'command', simId: activeSimId, action }));
         if (action === 'reset') {
             setDynamicObstacles([]);
             setPathHistory([]);
@@ -130,12 +226,18 @@ export default function MapDashboard() {
     };
 
     const applyWeatherUpdate = () => {
-        wsRef.current?.send(JSON.stringify({ type: 'weather_update', ...weather }));
+        if (!activeSimId) {
+            addEventLog('warning', 'NO_ACTIVE_SIMULATION', 'Start a simulation before changing weather.');
+            return;
+        }
+        wsRef.current?.send(JSON.stringify({ type: 'weather_update', simId: activeSimId, ...weather }));
     };
 
     const defaultCenter: [number, number] = [21.0285, 105.8542];
     const mapCenter = mapConfig ? mapConfig.start : defaultCenter;
     const battery = droneState?.batteryPercent ?? droneState?.battery;
+    const startDisabled = serverStatus !== 'connected' || workerStatus !== 'idle' || simulationStatus === 'running';
+    const resetDisabled = !activeSimId;
     const eventLevelClass = (level: string) => {
         if (level === 'error') return 'text-red-600';
         if (level === 'warning') return 'text-amber-600';
@@ -183,9 +285,20 @@ export default function MapDashboard() {
 
             <div className="w-64 border-r border-slate-200 p-6 z-[1000] bg-slate-50 flex flex-col gap-6">
                 <h2 className="text-lg font-bold border-b pb-2 text-slate-700">UAV Control</h2>
+                <div className="p-3 bg-white rounded border border-slate-200">
+                    <h3 className="text-sm font-bold text-slate-700 border-b pb-2">Connection</h3>
+                    <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 font-mono text-xs font-bold text-slate-700">
+                        <span>Server</span><span>{serverStatus}</span>
+                        <span>Worker</span><span>{workerStatus}</span>
+                        <span>Sim</span><span>{simulationStatus}</span>
+                        <span>Sim ID</span><span>{activeSimId ?? '-'}</span>
+                        <span>Ping</span><span>{latencyMs !== null ? `${latencyMs}ms` : '-'}</span>
+                        <span>FE</span><span>{frontendId ?? '-'}</span>
+                    </div>
+                </div>
                 <div className="flex flex-col gap-3">
-                    <button onClick={() => sendCommand('start')} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded shadow-sm transition-all">BAT DAU BAY</button>
-                    <button onClick={() => sendCommand('reset')} className="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-2 px-4 rounded shadow-sm transition-all">LAM MOI (RESET)</button>
+                    <button disabled={startDisabled} onClick={() => sendCommand('start')} className="bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:text-slate-500 text-white font-bold py-2 px-4 rounded shadow-sm transition-all">BAT DAU BAY</button>
+                    <button disabled={resetDisabled} onClick={() => sendCommand('reset')} className="bg-slate-200 hover:bg-slate-300 disabled:bg-slate-100 disabled:text-slate-400 text-slate-700 font-bold py-2 px-4 rounded shadow-sm transition-all">LAM MOI (RESET)</button>
                 </div>
                 <div className="flex flex-col gap-3 p-4 bg-white rounded border border-slate-200 mt-4">
                     <h3 className="text-sm font-bold text-slate-700 border-b pb-2">Thoi tiet & Moi truong</h3>
