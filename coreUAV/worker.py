@@ -1,21 +1,31 @@
-import yaml
-import time
 import json
+import time
+
 import websocket
-from websocket import create_connection
+import yaml
 from pyproj import Transformer
-from environment import DeliveryEnv
-from graph_map import path_point_altitude, path_point_node
-from statuses import DroneStatus, EventCode, EventLevel
+from websocket import create_connection
+
 from energy_model import rain_factor
+from graph_map import path_point_altitude, path_point_node
+from simulation_world import SimulationWorld
+from statuses import DroneStatus, EventCode, EventLevel
 
 WS_URL = "ws://localhost:8080"
-DRONE_ID = "drone_1"
+SYSTEM_DRONE_ID = "system"
 TELEMETRY_EVERY_N_STEPS = 2
 
 
 def now_ms():
     return int(time.time() * 1000)
+
+
+def parse_bool(value):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "on")
+    return bool(value)
 
 
 def main():
@@ -28,10 +38,10 @@ def main():
     }))
     print("Da ket noi va gui register worker!")
 
-    with open('config.yaml', 'r') as f:
+    with open("config.yaml", "r") as f:
         config = yaml.safe_load(f)
 
-    env = None
+    world = None
     transformer = None
     sim_id = None
     frontend_id = None
@@ -39,26 +49,21 @@ def main():
     is_running = False
     step = 0
     telemetry_counter = 0
-    last_path_id = None
-    dt = config['simulation']['time_step']
+    drone_count = 1
+    last_path_ids = {}
+    dt = config["simulation"]["time_step"]
 
     def current_sim_id():
         return sim_id
 
-    def parse_bool(value):
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, str):
-            return value.strip().lower() in ("1", "true", "yes", "on")
-        return bool(value)
-
-    def send_event(level, code, message):
+    def send_event(level, code, message, drone_id=SYSTEM_DRONE_ID):
         ws.send(json.dumps({
             "type": "event",
             "simId": current_sim_id(),
-            "droneId": DRONE_ID,
+            "droneId": drone_id,
             "timestamp": now_ms(),
             "payload": {
+                "droneId": drone_id,
                 "level": level,
                 "code": code,
                 "message": message
@@ -75,48 +80,68 @@ def main():
             }
         }))
 
+    def gps_for_node(node):
+        x, y = world.graph.nodes[node]
+        lon, lat = transformer.transform(x, y)
+        return [lat, lon]
+
     def send_config():
+        drones = [
+            {
+                "droneId": agent.drone_id,
+                "start": gps_for_node(agent.start_node),
+                "goal": gps_for_node(agent.goal_node)
+            }
+            for agent in world.get_agents()
+        ]
+        payload = {
+            "droneCount": len(drones),
+            "drones": drones,
+            "start": config["map"]["start_latlng"],
+            "goal": config["map"]["goal_latlng"],
+            "charging_stations": config["map"].get("charging_stations_latlng", []),
+            "no_fly_zones": config["map"].get("no_fly_zones", [])
+        }
         ws.send(json.dumps({
             "type": "config",
             "simId": current_sim_id(),
-            "droneId": DRONE_ID,
+            "droneId": SYSTEM_DRONE_ID,
             "timestamp": now_ms(),
-            "start": config['map']['start_latlng'],
-            "goal": config['map']['goal_latlng'],
-            "charging_stations": config['map'].get('charging_stations_latlng', []),
-            "no_fly_zones": config['map'].get('no_fly_zones', [])
+            "payload": payload,
+            **payload
         }))
 
-    def send_telemetry(terminated=False):
-        if env is None or transformer is None or env.drone.pos is None:
-            return
-
-        lon, lat = transformer.transform(env.drone.pos[0], env.drone.pos[1])
-        payload = {
+    def agent_payload(agent, terminated=False):
+        lon, lat = transformer.transform(agent.drone.pos[0], agent.drone.pos[1])
+        return {
+            "droneId": agent.drone_id,
             "pos": [lat, lon],
-            "batteryPercent": float(env.drone.battery),
-            "altitude": float(env.drone.altitude),
-            "speed": float(env.drone.speed * rain_factor(env.is_raining)["speed_factor"]),
-            "heading": float(env.drone.heading),
-            "temperature": float(env.drone.temperature),
-            "status": env.drone.status,
+            "batteryPercent": float(agent.drone.battery),
+            "altitude": float(agent.drone.altitude),
+            "targetAltitude": float(agent.current_target_altitude),
+            "altitudeChangeRate": float(agent.altitude_change_rate),
+            "speed": float(agent.drone.speed * rain_factor(world.is_raining)["speed_factor"] * agent.temp_speed_factor),
+            "heading": float(agent.drone.heading),
+            "temperature": float(agent.drone.temperature),
+            "status": agent.drone.status,
             "mode": "delivery",
-            "energyConsumed": float(env.drone.max_battery - env.drone.battery),
-            "windDir": float(env.wind_dir),
-            "windSpeed": float(env.wind_speed),
-            "ambientTemp": float(env.ambient_temp),
-            "isRaining": bool(env.is_raining),
-            "targetAltitude": float(getattr(env, "current_target_altitude", env.drone.altitude)),
-            "altitudeChangeRate": float(getattr(env, "altitude_change_rate", 0.0)),
-            "currentPathIndex": int(getattr(env, "path_index", 0)),
-            "pathLength": int(len(getattr(env, "path", []))),
+            "energyConsumed": float(agent.drone.max_battery - agent.drone.battery),
+            "windDir": float(world.wind_dir),
+            "windSpeed": float(world.wind_speed),
+            "ambientTemp": float(world.ambient_temp),
+            "isRaining": bool(world.is_raining),
+            "currentPathIndex": int(agent.path_index),
+            "pathLength": int(len(agent.path)),
             "step": step,
             "terminated": terminated
         }
+
+    def send_telemetry_for_agent(agent, terminated=False):
+        payload = agent_payload(agent, terminated)
         ws.send(json.dumps({
             "type": "telemetry",
             "simId": current_sim_id(),
-            "droneId": DRONE_ID,
+            "droneId": agent.drone_id,
             "timestamp": now_ms(),
             "payload": payload,
             "step": payload["step"],
@@ -124,6 +149,8 @@ def main():
             "battery": payload["batteryPercent"],
             "batteryPercent": payload["batteryPercent"],
             "altitude": payload["altitude"],
+            "targetAltitude": payload["targetAltitude"],
+            "altitudeChangeRate": payload["altitudeChangeRate"],
             "speed": payload["speed"],
             "heading": payload["heading"],
             "temperature": payload["temperature"],
@@ -132,18 +159,23 @@ def main():
             "windSpeed": payload["windSpeed"],
             "ambientTemp": payload["ambientTemp"],
             "isRaining": payload["isRaining"],
-            "targetAltitude": payload["targetAltitude"],
-            "altitudeChangeRate": payload["altitudeChangeRate"],
             "currentPathIndex": payload["currentPathIndex"],
             "pathLength": payload["pathLength"],
             "terminated": payload["terminated"]
         }))
 
+    def send_all_telemetry(terminated=False):
+        if world is None or transformer is None:
+            return
+        for agent in world.get_agents():
+            if agent.drone.pos is not None:
+                send_telemetry_for_agent(agent, terminated)
+
     def send_wind_shadow_zones():
-        if env is None or transformer is None:
+        if world is None or transformer is None:
             return
 
-        shadow_utm = env.graph.get_wind_shadow_nodes(env.wind_dir, env.drone.normal_altitude)
+        shadow_utm = world.graph.get_wind_shadow_nodes(world.wind_dir, config["drone"]["normal_altitude"])
         shadow_gps = []
         for (x, y) in shadow_utm:
             lon, lat = transformer.transform(x, y)
@@ -151,7 +183,7 @@ def main():
         ws.send(json.dumps({
             "type": "wind_shadow_zones",
             "simId": current_sim_id(),
-            "droneId": DRONE_ID,
+            "droneId": SYSTEM_DRONE_ID,
             "timestamp": now_ms(),
             "payload": {
                 "zones": shadow_gps
@@ -159,60 +191,69 @@ def main():
             "zones": shadow_gps
         }))
 
-    def send_planned_path():
-        if env is None or transformer is None or not env.path:
-            return
-
+    def planned_path_payload(agent):
         gps_path = []
         gps_path3d = []
-        if env.drone.pos:
-            lon_d, lat_d = transformer.transform(env.drone.pos[0], env.drone.pos[1])
+        if agent.drone.pos:
+            lon_d, lat_d = transformer.transform(agent.drone.pos[0], agent.drone.pos[1])
             gps_path.append([lat_d, lon_d])
             gps_path3d.append({
                 "pos": [lat_d, lon_d],
-                "altitude": float(env.drone.altitude)
+                "altitude": float(agent.drone.altitude)
             })
 
-        for point in env.path[env.path_index:]:
+        for point in agent.path[agent.path_index:]:
             node = path_point_node(point)
-            altitude = path_point_altitude(point, env.drone.altitude)
-            x, y = env.graph.nodes[node]
+            altitude = path_point_altitude(point, agent.drone.altitude)
+            x, y = world.graph.nodes[node]
             lon, lat = transformer.transform(x, y)
             gps_path.append([lat, lon])
             gps_path3d.append({
                 "pos": [lat, lon],
                 "altitude": float(altitude)
             })
+        return {
+            "droneId": agent.drone_id,
+            "path": gps_path,
+            "path3d": gps_path3d
+        }
 
+    def send_planned_path_for_agent(agent):
+        if not agent.path:
+            return
+        payload = planned_path_payload(agent)
         ws.send(json.dumps({
             "type": "planned_path",
             "simId": current_sim_id(),
-            "droneId": DRONE_ID,
+            "droneId": agent.drone_id,
             "timestamp": now_ms(),
-            "payload": {
-                "path": gps_path,
-                "path3d": gps_path3d
-            },
-            "path": gps_path,
-            "path3d": gps_path3d
+            "payload": payload,
+            "path": payload["path"],
+            "path3d": payload["path3d"]
         }))
+
+    def send_all_planned_paths():
+        if world is None or transformer is None:
+            return
+        for agent in world.get_agents():
+            send_planned_path_for_agent(agent)
 
     def send_simulation_finished(status):
         ws.send(json.dumps({
             "type": "simulation_finished",
             "simId": current_sim_id(),
-            "droneId": DRONE_ID,
+            "droneId": SYSTEM_DRONE_ID,
             "timestamp": now_ms(),
             "payload": {
                 "status": status
             }
         }))
 
-    def drain_env_events():
-        if env is None:
+    def drain_world_events():
+        if world is None:
             return
-        for evt in env.drain_events():
-            send_event(evt["level"], evt["code"], evt["message"])
+        for evt in world.drain_events():
+            send_event(evt["level"], evt["code"], evt["message"], evt.get("droneId", SYSTEM_DRONE_ID))
 
     def reject_wrong_sim(data):
         if data.get("simId") != sim_id:
@@ -223,171 +264,133 @@ def main():
             return True
         return False
 
+    def mark_current_paths():
+        return {
+            agent.drone_id: id(agent.path)
+            for agent in world.get_agents()
+        }
+
     print("\nWorker DA SAN SANG, dang cho start_simulation...\n")
 
     while True:
         try:
             msg = ws.recv()
             data = json.loads(msg)
-            msg_type = data.get('type')
+            msg_type = data.get("type")
 
-            if msg_type == 'registered':
+            if msg_type == "registered":
                 print(f"Worker registered voi broker: {data.get('clientId')}")
 
-            elif msg_type == 'ping':
+            elif msg_type == "ping":
                 ws.send(json.dumps({
                     "type": "pong",
                     "timestamp": data.get("timestamp")
                 }))
 
-            elif msg_type == 'start_simulation':
+            elif msg_type == "start_simulation":
+                payload = data.get("payload") or {}
                 sim_id = data.get("simId")
                 frontend_id = data.get("frontendId")
+                drone_count = max(1, min(5, int(payload.get("droneCount", 1) or 1)))
                 is_assigned = True
                 is_running = False
                 step = 0
                 telemetry_counter = 0
 
-                env = DeliveryEnv(config)
-                env.reset(seed=config['simulation']['seed'])
-                transformer = Transformer.from_crs(env.graph.crs_utm, "epsg:4326", always_xy=True)
-                last_path_id = id(env.path)
+                world = SimulationWorld(config, drone_count)
+                transformer = Transformer.from_crs(world.graph.crs_utm, "epsg:4326", always_xy=True)
+                last_path_ids = mark_current_paths()
 
                 send_config()
-                send_telemetry()
+                send_all_telemetry()
                 send_wind_shadow_zones()
-                send_planned_path()
-                send_event(EventLevel.INFO.value, EventCode.PATH_PLANNED.value, "Initial path planned.")
-                drain_env_events()
+                send_all_planned_paths()
+                drain_world_events()
                 is_running = True
-                print(f"Bat dau simulation {sim_id} cho {frontend_id}")
+                print(f"Bat dau simulation {sim_id} cho {frontend_id} voi {drone_count} drone")
 
-            elif msg_type == 'add_obstacle':
+            elif msg_type == "add_obstacle":
                 if not is_assigned or reject_wrong_sim(data):
                     continue
-                payload = data.get('payload') or {}
-                pos = payload.get('pos') or data.get('pos')
-                radius = payload.get('radius', 8.0)
-                height = payload.get('height', 25.0)
-                obstacle_type = payload.get('obstacleType', 'unknown')
+                payload = data.get("payload") or {}
+                pos = payload.get("pos") or data.get("pos")
+                radius = payload.get("radius", 8.0)
+                height = payload.get("height", 25.0)
+                obstacle_type = payload.get("obstacleType", "unknown")
                 if not pos:
                     send_event(EventLevel.ERROR.value, EventCode.WORKER_ERROR.value, "Obstacle message missing position.")
                     continue
-                env.add_obstacle(pos, radius=radius, height=height, obstacle_type=obstacle_type)
+                world.add_obstacle(pos, radius=radius, height=height, obstacle_type=obstacle_type)
                 send_event(EventLevel.WARNING.value, EventCode.OBSTACLE_ADDED.value, "Obstacle added by user.")
-                drain_env_events()
+                drain_world_events()
 
-            elif msg_type == 'weather_update':
+            elif msg_type == "weather_update":
                 if not is_assigned or reject_wrong_sim(data):
                     continue
-                payload = data.get('payload') or {}
-                wind_dir = payload.get('wind_dir', data.get('wind_dir', env.wind_dir))
-                wind_speed = payload.get('wind_speed', data.get('wind_speed', env.wind_speed))
-                ambient_temp = payload.get('ambient_temp', data.get('ambient_temp', env.ambient_temp))
-                rain_value = payload.get('is_raining', payload.get('rain', data.get('is_raining', data.get('rain', False))))
-                is_raining = parse_bool(rain_value)
+                payload = data.get("payload") or {}
+                wind_dir = payload.get("wind_dir", data.get("wind_dir", world.wind_dir))
+                wind_speed = payload.get("wind_speed", data.get("wind_speed", world.wind_speed))
+                ambient_temp = payload.get("ambient_temp", data.get("ambient_temp", world.ambient_temp))
+                rain_value = payload.get("is_raining", payload.get("rain", data.get("is_raining", data.get("rain", False))))
                 was_running = is_running
                 is_running = False
-                env.update_weather(
+                world.update_weather(
                     wind_dir=float(wind_dir),
                     wind_speed=float(wind_speed),
                     ambient_temp=float(ambient_temp),
-                    is_raining=is_raining
+                    is_raining=parse_bool(rain_value),
+                    replan=True
                 )
                 send_event(
                     EventLevel.INFO.value,
                     EventCode.WEATHER_CHANGED.value,
-                    f"Weather changed: wind_to={env.wind_dir} deg, speed={env.wind_speed} m/s, temp={env.ambient_temp} C, rain={'on' if env.is_raining else 'off'}. Replanning path."
+                    f"Weather changed: wind_to={world.wind_dir} deg, speed={world.wind_speed} m/s, temp={world.ambient_temp} C, rain={'on' if world.is_raining else 'off'}. Replanning paths.",
+                    SYSTEM_DRONE_ID
                 )
-                print("   [Worker] Tinh lai duong theo gio moi...")
-
-                current_x, current_y = env.drone.pos
-                cx = int(round((current_x - env.graph.min_x) / env.graph.resolution))
-                cy = int(round((current_y - env.graph.min_y) / env.graph.resolution))
-
-                cx = max(0, min(env.graph.cols - 1, cx))
-                cy = max(0, min(env.graph.rows - 1, cy))
-
-                env.drone.node = (cx, cy)
-                env.drone.status = DroneStatus.PLANNING.value
-
-                raw_path = env.graph.a_star_2_5d(
-                    env.drone.node,
-                    env.current_target_node,
-                    current_altitude=env.drone.altitude,
-                    wind_dir=env.wind_dir,
-                    wind_speed=env.wind_speed,
-                    ambient_temp=env.ambient_temp,
-                    is_raining=env.is_raining
-                )
-                env.path = env.graph.smooth_path(raw_path, env.drone.altitude)
-                env.path_index = 0
-                env.current_target_altitude = env._next_target_altitude()
-                env.drone.status = DroneStatus.FLYING.value if env.path else DroneStatus.FAILED.value
                 send_wind_shadow_zones()
-                send_planned_path()
-                if env.path:
-                    send_event(EventLevel.INFO.value, EventCode.PATH_REPLANNED.value, "Path replanned after weather update.")
-                else:
-                    env.drone.status = DroneStatus.EMERGENCY_LANDING.value
-                    send_event(EventLevel.ERROR.value, EventCode.DELIVERY_FAILED.value, "Delivery failed.")
+                send_all_planned_paths()
+                send_all_telemetry()
+                drain_world_events()
+                last_path_ids = mark_current_paths()
                 is_running = was_running
-                last_path_id = id(env.path)
-                drain_env_events()
 
-            elif msg_type == 'command':
+            elif msg_type == "command":
                 if not is_assigned or reject_wrong_sim(data):
                     continue
-                cmd = data.get('action')
-                if cmd == 'start' and not is_running:
-                    print("Da nhan lenh BAT DAU!")
+                cmd = data.get("action")
+                if cmd in ("start", "resume"):
+                    print("Da nhan lenh RESUME/START!")
+                    world.resume()
                     is_running = True
-                    if env is not None and env.drone.status == DroneStatus.PAUSED.value:
-                        env.drone.status = DroneStatus.FLYING.value
-                    send_event(EventLevel.INFO.value, EventCode.PATH_PLANNED.value, "Simulation started.")
-                elif cmd == 'pause':
+                    send_event(EventLevel.INFO.value, EventCode.SIMULATION_RESUMED.value, "Simulation resumed.")
+                    send_all_telemetry()
+                elif cmd == "pause":
                     print("Da nhan lenh PAUSE!")
-                    if env is not None and is_running:
-                        is_running = False
-                        if env.drone.status not in (
-                            DroneStatus.SUCCESS.value,
-                            DroneStatus.FAILED.value,
-                            DroneStatus.EMERGENCY_LANDING.value
-                        ):
-                            env.drone.status = DroneStatus.PAUSED.value
-                        send_event(EventLevel.INFO.value, EventCode.SIMULATION_PAUSED.value, "Simulation paused.")
-                        send_telemetry()
-                elif cmd == 'resume':
-                    print("Da nhan lenh RESUME!")
-                    if env is not None:
-                        if env.drone.status == DroneStatus.PAUSED.value:
-                            env.drone.status = DroneStatus.FLYING.value
-                        is_running = True
-                        send_event(EventLevel.INFO.value, EventCode.SIMULATION_RESUMED.value, "Simulation resumed.")
-                        send_telemetry()
-                elif cmd == 'reset':
+                    is_running = False
+                    world.pause()
+                    send_event(EventLevel.INFO.value, EventCode.SIMULATION_PAUSED.value, "Simulation paused.")
+                    send_all_telemetry()
+                elif cmd == "reset":
                     print("Da nhan lenh RESET!")
                     is_running = False
-                    env.reset()
+                    world.reset(drone_count)
                     step = 0
                     telemetry_counter = 0
-                    send_telemetry()
+                    send_all_telemetry()
                     send_wind_shadow_zones()
-                    send_planned_path()
-                    send_event(EventLevel.INFO.value, EventCode.PATH_PLANNED.value, "Simulation reset and path planned.")
-                    drain_env_events()
-                    last_path_id = id(env.path)
+                    send_all_planned_paths()
+                    drain_world_events()
+                    last_path_ids = mark_current_paths()
                     is_running = True
-                elif cmd == 'stop':
+                elif cmd == "stop":
                     print("Da nhan lenh STOP!")
                     is_running = False
-                    if env is not None:
-                        env.drone.status = DroneStatus.FAILED.value
-                        send_telemetry(True)
+                    world.stop()
+                    send_all_telemetry(True)
                     send_event(EventLevel.INFO.value, EventCode.SIMULATION_STOPPED.value, "Simulation stopped by operator.")
                     send_simulation_finished("stopped")
-                    is_assigned = False
                     send_worker_status("idle")
+                    is_assigned = False
                     sim_id = None
                     frontend_id = None
 
@@ -400,34 +403,27 @@ def main():
             except Exception:
                 pass
 
-        if is_running and env is not None:
+        if is_running and world is not None:
             try:
-                obs, reward, terminated, truncated, info = env.step()
+                world.step()
                 step += 1
-                drain_env_events()
+                drain_world_events()
                 telemetry_counter += 1
                 if telemetry_counter >= TELEMETRY_EVERY_N_STEPS:
-                    send_telemetry(terminated or truncated)
+                    send_all_telemetry()
                     telemetry_counter = 0
 
-                current_path_id = id(env.path)
-                if current_path_id != last_path_id:
-                    print("   [Worker] Phat hien quy dao thay doi, dang gui update len UI...")
-                    send_planned_path()
-                    send_event(EventLevel.INFO.value, EventCode.PATH_REPLANNED.value, "Path replanned.")
-                    last_path_id = current_path_id
+                current_path_ids = mark_current_paths()
+                for agent in world.get_agents():
+                    if current_path_ids.get(agent.drone_id) != last_path_ids.get(agent.drone_id):
+                        print(f"   [Worker] Path changed for {agent.drone_id}, sending update...")
+                        send_planned_path_for_agent(agent)
+                        last_path_ids[agent.drone_id] = current_path_ids.get(agent.drone_id)
 
                 time.sleep(dt)
-                if terminated or truncated:
-                    if env.drone.status == DroneStatus.SUCCESS.value:
-                        finished_status = "success"
-                        send_telemetry(True)
-                    else:
-                        finished_status = "truncated" if truncated else "failed"
-                        if env.drone.status != DroneStatus.EMERGENCY_LANDING.value:
-                            env.drone.status = DroneStatus.FAILED.value
-                        send_telemetry(True)
-
+                if world.is_all_done():
+                    finished_status = world.final_status()
+                    send_all_telemetry(True)
                     send_simulation_finished(finished_status)
                     send_worker_status("idle")
                     print("Simulation ket thuc. Worker ve idle.")
@@ -437,10 +433,10 @@ def main():
                     frontend_id = None
             except Exception as e:
                 print(f"[Worker Error] {e}")
-                if env is not None:
-                    env.drone.status = DroneStatus.FAILED.value
+                if world is not None:
+                    world.stop()
                 try:
-                    send_telemetry(True)
+                    send_all_telemetry(True)
                     send_event(EventLevel.ERROR.value, EventCode.WORKER_ERROR.value, str(e))
                     send_simulation_finished("failed")
                     send_worker_status("idle")

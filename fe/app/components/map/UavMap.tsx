@@ -8,10 +8,13 @@ import MapEvents from './MapEvents';
 import WindOverlay from './WindOverlay';
 import type {
     DroneTelemetry,
+    DronesById,
     DynamicObstacle,
     LatLng,
     LayerToggles,
-    MapConfig
+    MapConfig,
+    PathHistoryByDrone,
+    PlannedPathsByDrone
 } from '../types/simulation';
 
 const MapContainer = dynamic(() => import('react-leaflet').then(mod => mod.MapContainer), { ssr: false });
@@ -25,15 +28,17 @@ const Circle = dynamic(() => import('react-leaflet').then(mod => mod.Circle), { 
 type UavMapProps = {
     buildings: GeoJsonObject | null;
     mapConfig: MapConfig | null;
-    droneState: DroneTelemetry | null;
-    plannedPath: LatLng[];
-    pathHistory: LatLng[];
+    drones: DronesById;
+    selectedDroneId: string | null;
+    plannedPaths: PlannedPathsByDrone;
+    pathHistoryByDrone: PathHistoryByDrone;
     dynamicObstacles: DynamicObstacle[];
     windShadowZones: LatLng[];
     layers: LayerToggles;
     windDir: number;
     windSpeed: number;
     onMapClick: (latlng: LatLng) => void;
+    onSelectDrone: (droneId: string) => void;
 };
 
 function droneColors(status?: string) {
@@ -50,19 +55,21 @@ function droneColors(status?: string) {
 export default function UavMap({
     buildings,
     mapConfig,
-    droneState,
-    plannedPath,
-    pathHistory,
+    drones,
+    selectedDroneId,
+    plannedPaths,
+    pathHistoryByDrone,
     dynamicObstacles,
     windShadowZones,
     layers,
     windDir,
     windSpeed,
-    onMapClick
+    onMapClick,
+    onSelectDrone
 }: UavMapProps) {
     const defaultCenter: LatLng = [21.0285, 105.8542];
     const mapCenter = mapConfig ? mapConfig.start : defaultCenter;
-    const colors = droneColors(droneState?.status);
+    const selectedDrone = selectedDroneId ? drones[selectedDroneId] : null;
     const sampledZones = useMemo(() => {
         if (windShadowZones.length <= 2000) return windShadowZones;
         const step = Math.ceil(windShadowZones.length / 2000);
@@ -114,13 +121,38 @@ export default function UavMap({
                     </>
                 )}
 
-                {layers.plannedPath && plannedPath.length > 0 && (
-                    <Polyline positions={plannedPath} pathOptions={{ color: '#f97316', weight: 4, opacity: 0.8, dashArray: '8, 8' }} />
-                )}
+                {layers.plannedPath && Object.entries(plannedPaths).map(([droneId, path]) => {
+                    if (path.length === 0) return null;
+                    const selected = droneId === selectedDroneId;
+                    return (
+                        <Polyline
+                            key={`planned-${droneId}`}
+                            positions={path}
+                            pathOptions={{
+                                color: selected ? '#f97316' : '#94a3b8',
+                                weight: selected ? 4 : 2,
+                                opacity: selected ? 0.85 : 0.45,
+                                dashArray: selected ? '8, 8' : '4, 10'
+                            }}
+                        />
+                    );
+                })}
 
-                {layers.pathHistory && pathHistory.length > 0 && (
-                    <Polyline positions={pathHistory} pathOptions={{ color: '#2563eb', weight: 3, opacity: 0.7 }} />
-                )}
+                {layers.pathHistory && Object.entries(pathHistoryByDrone).map(([droneId, history]) => {
+                    if (history.length === 0) return null;
+                    const selected = droneId === selectedDroneId;
+                    return (
+                        <Polyline
+                            key={`history-${droneId}`}
+                            positions={history}
+                            pathOptions={{
+                                color: selected ? '#2563eb' : '#64748b',
+                                weight: selected ? 3 : 2,
+                                opacity: selected ? 0.7 : 0.35
+                            }}
+                        />
+                    );
+                })}
 
                 {layers.windShadow && sampledZones.map((pos, idx) => (
                     <CircleMarker key={`shadow-${idx}`} center={pos} radius={2} pathOptions={{ color: '#22c55e', fillColor: '#22c55e', fillOpacity: 0.5 }} />
@@ -138,16 +170,30 @@ export default function UavMap({
                     );
                 })}
 
-                {droneState?.pos && (
-                    <>
-                        {layers.sensorRange && (
-                            <Circle center={droneState.pos} radius={30} pathOptions={{ color: colors.halo, fillColor: colors.halo, fillOpacity: 0.12, weight: 1, dashArray: '4,4' }} />
-                        )}
-                        <CircleMarker center={droneState.pos} radius={8} pathOptions={{ color: colors.color, fillColor: colors.color, fillOpacity: 1, weight: 2 }}>
-                            <Tooltip permanent direction="bottom" className="building-label">UAV</Tooltip>
-                        </CircleMarker>
-                    </>
+                {layers.sensorRange && selectedDrone?.pos && (
+                    <Circle center={selectedDrone.pos} radius={30} pathOptions={{ color: droneColors(selectedDrone.status).halo, fillColor: droneColors(selectedDrone.status).halo, fillOpacity: 0.12, weight: 1, dashArray: '4,4' }} />
                 )}
+
+                {Object.values(drones).map((drone: DroneTelemetry) => {
+                    if (!drone.pos) return null;
+                    const droneId = drone.droneId ?? 'drone_1';
+                    const selected = droneId === selectedDroneId;
+                    const colors = droneColors(drone.status);
+                    const battery = drone.batteryPercent ?? drone.battery;
+                    return (
+                        <CircleMarker
+                            key={`drone-${droneId}`}
+                            center={drone.pos}
+                            radius={selected ? 10 : 7}
+                            eventHandlers={{ click: () => onSelectDrone(droneId) }}
+                            pathOptions={{ color: colors.color, fillColor: colors.color, fillOpacity: 1, weight: selected ? 3 : 2 }}
+                        >
+                            <Tooltip permanent={selected} direction="bottom" className="building-label">
+                                {droneId} / {drone.status ?? '--'} / {typeof battery === 'number' ? `${battery.toFixed(0)}%` : '--'}
+                            </Tooltip>
+                        </CircleMarker>
+                    );
+                })}
             </MapContainer>
         </div>
     );

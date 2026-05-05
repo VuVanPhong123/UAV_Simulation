@@ -19,13 +19,14 @@ import {
 
 export default function GcsDashboard() {
     const socket = useSimulationSocket();
-    const telemetryHistory = useTelemetryHistory(socket.droneState);
+    const telemetryHistory = useTelemetryHistory(socket.drones, socket.selectedDroneId);
     const addLocalEvent = socket.addLocalEvent;
     const [buildings, setBuildings] = useState<GeoJsonObject | null>(null);
     const [weather, setWeather] = useState<WeatherState>({ wind_dir: 0, wind_speed: 0, ambient_temp: 25, is_raining: false });
     const [obstacleConfig, setObstacleConfig] = useState<ObstacleConfig>({ radius: 8, height: 25, obstacleType: 'unknown' });
     const [dynamicObstacles, setDynamicObstacles] = useState<DynamicObstacle[]>([]);
     const [layers, setLayers] = useState<LayerToggles>(DEFAULT_LAYER_TOGGLES);
+    const [droneCount, setDroneCount] = useState(1);
 
     useEffect(() => {
         fetch('/hanoi_buildings.geojson')
@@ -105,16 +106,21 @@ export default function GcsDashboard() {
                     activeSimId={socket.activeSimId}
                     frontendId={socket.frontendId}
                     latencyMs={socket.latencyMs}
-                    droneState={socket.droneState}
-                    plannedPath3d={socket.plannedPath3d}
+                    droneState={socket.selectedDrone}
+                    drones={socket.drones}
+                    selectedDroneId={socket.selectedDroneId}
+                    plannedPath3d={socket.selectedPath3d}
                     eventLogs={socket.eventLogs}
                     weather={weather}
                     obstacleConfig={obstacleConfig}
                     layers={layers}
+                    droneCount={droneCount}
                     batteryHistory={telemetryHistory.batteryHistory}
                     temperatureHistory={telemetryHistory.temperatureHistory}
                     altitudeHistory={telemetryHistory.altitudeHistory}
-                    onStart={socket.startSimulation}
+                    onStart={() => socket.startSimulation(droneCount)}
+                    onDroneCountChange={setDroneCount}
+                    onSelectDrone={socket.setSelectedDroneId}
                     onPause={socket.pauseSimulation}
                     onResume={socket.resumeSimulation}
                     onStop={handleStop}
@@ -128,15 +134,17 @@ export default function GcsDashboard() {
                     <UavMap
                         buildings={buildings}
                         mapConfig={socket.mapConfig}
-                        droneState={socket.droneState}
-                        plannedPath={socket.plannedPath}
-                        pathHistory={telemetryHistory.pathHistory}
+                        drones={socket.drones}
+                        selectedDroneId={socket.selectedDroneId}
+                        plannedPaths={socket.plannedPaths}
+                        pathHistoryByDrone={telemetryHistory.pathHistoryByDrone}
                         dynamicObstacles={dynamicObstacles}
                         windShadowZones={socket.windShadowZones}
                         layers={layers}
                         windDir={weather.wind_dir}
                         windSpeed={weather.wind_speed}
                         onMapClick={handleMapClick}
+                        onSelectDrone={socket.setSelectedDroneId}
                     />
                 </main>
             </div>

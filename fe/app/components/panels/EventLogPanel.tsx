@@ -22,7 +22,7 @@ export default function EventLogPanel({ events }: EventLogPanelProps) {
                     <div key={`${log.timestamp ?? 'event'}-${idx}`} className="rounded border border-slate-100 bg-slate-50 p-2 text-xs leading-snug">
                         <div className="flex items-center justify-between gap-2">
                             <span className={`font-bold uppercase ${levelClass(log.level)}`}>{log.level}</span>
-                            <span className="truncate font-mono text-[10px] font-bold text-slate-500">{log.code}</span>
+                            <span className="truncate font-mono text-[10px] font-bold text-slate-500">{log.droneId ? `${log.droneId} / ` : ''}{log.code}</span>
                         </div>
                         <p className="mt-1 text-slate-700">{log.message}</p>
                     </div>

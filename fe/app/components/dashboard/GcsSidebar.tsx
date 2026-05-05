@@ -3,6 +3,7 @@
 import AltitudePanel from '../panels/AltitudePanel';
 import ConnectionPanel from '../panels/ConnectionPanel';
 import ControlPanel from '../panels/ControlPanel';
+import DroneListPanel from '../panels/DroneListPanel';
 import EventLogPanel from '../panels/EventLogPanel';
 import LayerTogglePanel from '../panels/LayerTogglePanel';
 import ObstaclePanel from '../panels/ObstaclePanel';
@@ -10,6 +11,7 @@ import TelemetryPanel from '../panels/TelemetryPanel';
 import WeatherPanel from '../panels/WeatherPanel';
 import type {
     DroneTelemetry,
+    DronesById,
     EventLogEntry,
     LayerToggles,
     ObstacleConfig,
@@ -29,15 +31,20 @@ type GcsSidebarProps = {
     frontendId: string | null;
     latencyMs: number | null;
     droneState: DroneTelemetry | null;
+    drones: DronesById;
+    selectedDroneId: string | null;
     plannedPath3d: PlannedPath3DPoint[];
     eventLogs: EventLogEntry[];
     weather: WeatherState;
     obstacleConfig: ObstacleConfig;
     layers: LayerToggles;
+    droneCount: number;
     batteryHistory: number[];
     temperatureHistory: number[];
     altitudeHistory: number[];
     onStart: () => void;
+    onDroneCountChange: (value: number) => void;
+    onSelectDrone: (droneId: string) => void;
     onPause: () => void;
     onResume: () => void;
     onStop: () => void;
@@ -64,11 +71,18 @@ export default function GcsSidebar(props: GcsSidebarProps) {
                 workerStatus={props.workerStatus}
                 simulationStatus={props.simulationStatus}
                 activeSimId={props.activeSimId}
+                droneCount={props.droneCount}
+                onDroneCountChange={props.onDroneCountChange}
                 onStart={props.onStart}
                 onPause={props.onPause}
                 onResume={props.onResume}
                 onStop={props.onStop}
                 onReset={props.onReset}
+            />
+            <DroneListPanel
+                drones={props.drones}
+                selectedDroneId={props.selectedDroneId}
+                onSelect={props.onSelectDrone}
             />
             <TelemetryPanel
                 droneState={props.droneState}

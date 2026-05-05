@@ -105,7 +105,7 @@ def main():
             ROOT,
             env={"NODE_PATH": node_path}
         )
-        fake_output, _ = fake_proc.communicate(timeout=180)
+        fake_output, _ = fake_proc.communicate(timeout=300)
         print(fake_output, end="" if fake_output.endswith("\n") else "\n")
 
         if fake_proc.returncode != 0:

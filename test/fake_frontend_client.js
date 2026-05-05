@@ -12,7 +12,7 @@ try {
 }
 
 const WS_URL = 'ws://localhost:8080';
-const TOTAL_TIMEOUT_MS = 180000;
+const TOTAL_TIMEOUT_MS = 300000;
 
 let ws;
 let simId = null;
@@ -92,6 +92,11 @@ function telemetryPayload(message) {
 
 function plannedPathPayload(message) {
   return message.payload || message;
+}
+
+function droneId(message) {
+  const payload = message.payload || {};
+  return message.droneId || payload.droneId || 'drone_1';
 }
 
 function isValidPlannedPath3d(message) {
@@ -229,6 +234,122 @@ async function runScenario() {
 
   await waitFor((message) => message.type === 'telemetry' && message.simId === simId, 60000, 'reset accepted');
   pass('reset accepted');
+
+  send({
+    type: 'command',
+    simId,
+    action: 'stop',
+  });
+
+  await waitFor(
+    (message) => (
+      message.type === 'worker_status' && (
+        message.status === 'idle' || (message.payload && message.payload.status === 'idle')
+      )
+    ) || (
+      message.type === 'simulation_finished' && message.simId === simId
+    ),
+    60000,
+    'single-drone stop accepted'
+  );
+  pass('single-drone stop accepted');
+
+  clearBacklog();
+  simId = null;
+  send({
+    type: 'request_start_simulation',
+    payload: {
+      mapId: 'hanoi_default',
+      droneCount: 3,
+    },
+  });
+
+  const multiAssigned = await waitFor((message) => message.type === 'simulation_assigned', 30000, 'multi-drone simulation assigned');
+  simId = multiAssigned.simId;
+  pass('multi-drone simulation assigned');
+
+  await waitFor((message) => message.type === 'config' && message.simId === simId, 180000, 'multi-drone config');
+
+  const telemetryDrones = new Set();
+  while (telemetryDrones.size < 3) {
+    const telemetry = await waitFor(
+      (message) => message.simId === simId && isValidTelemetry(message),
+      180000,
+      'multi-drone telemetry received'
+    );
+    telemetryDrones.add(droneId(telemetry));
+  }
+  ['drone_1', 'drone_2', 'drone_3'].forEach((id) => {
+    if (!telemetryDrones.has(id)) {
+      fail('multi-drone telemetry received', `missing ${id}`);
+    }
+  });
+  pass('multi-drone telemetry received');
+
+  const pathDrones = new Set();
+  while (pathDrones.size < 3) {
+    const planned = await waitFor(
+      (message) => message.type === 'planned_path' && message.simId === simId,
+      180000,
+      'multi-drone planned paths received'
+    );
+    if (!isValidPlannedPath3d(planned)) {
+      fail('multi-drone planned paths received', `planned_path missing path3d for ${droneId(planned)}`);
+    }
+    pathDrones.add(droneId(planned));
+  }
+  ['drone_1', 'drone_2', 'drone_3'].forEach((id) => {
+    if (!pathDrones.has(id)) {
+      fail('multi-drone planned paths received', `missing ${id}`);
+    }
+  });
+  pass('multi-drone planned paths received');
+
+  clearBacklog();
+  send({
+    type: 'weather_update',
+    simId,
+    wind_dir: 120,
+    wind_speed: 8,
+    ambient_temp: 30,
+    is_raining: false,
+    payload: {
+      wind_dir: 120,
+      wind_speed: 8,
+      ambient_temp: 30,
+      is_raining: false,
+    },
+  });
+
+  await waitFor(
+    (message) => (
+      message.type === 'event' && ['WEATHER_CHANGED', 'PATH_REPLANNED'].includes(eventCode(message))
+    ) || (
+      message.type === 'telemetry' && message.simId === simId
+    ),
+    60000,
+    'multi-drone weather update accepted'
+  );
+  pass('multi-drone weather update accepted');
+
+  clearBacklog();
+  send({
+    type: 'command',
+    simId,
+    action: 'reset',
+  });
+
+  const resetDrones = new Set();
+  while (resetDrones.size < 3) {
+    const telemetry = await waitFor(
+      (message) => message.type === 'telemetry' && message.simId === simId,
+      180000,
+      'multi-drone reset telemetry'
+    );
+    resetDrones.add(droneId(telemetry));
+  }
+  pass('multi-drone reset telemetry');
+
   pass('pipeline test completed');
   cleanup(0);
 }

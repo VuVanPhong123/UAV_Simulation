@@ -14,6 +14,7 @@ export type PlannedPath3DPoint = {
 };
 
 export type DroneTelemetry = {
+    droneId?: string;
     pos?: LatLng;
     battery?: number;
     batteryPercent?: number;
@@ -40,14 +41,22 @@ export type MapConfig = {
     goal: LatLng;
     charging_stations?: LatLng[];
     no_fly_zones?: { center: LatLng; radius: number }[];
+    droneCount?: number;
+    drones?: { droneId: string; start: LatLng; goal: LatLng }[];
 };
 
 export type EventLogEntry = {
     timestamp?: number;
+    droneId?: string | null;
     level: string;
     code: string;
     message: string;
 };
+
+export type DronesById = Record<string, DroneTelemetry>;
+export type PlannedPathsByDrone = Record<string, LatLng[]>;
+export type PlannedPath3dByDrone = Record<string, PlannedPath3DPoint[]>;
+export type PathHistoryByDrone = Record<string, LatLng[]>;
 
 export type WeatherState = {
     wind_dir: number;
@@ -91,11 +100,13 @@ export type IncomingMessage = {
     workerStatus?: WorkerStatus;
     activeSimId?: string | null;
     simId?: string | null;
+    droneId?: string | null;
     workerId?: string;
     status?: string;
     message?: string;
     latencyMs?: number;
     payload?: DroneTelemetry & {
+        droneId?: string;
         zones?: LatLng[];
         path?: LatLng[];
         path3d?: PlannedPath3DPoint[];
