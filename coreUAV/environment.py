@@ -1,6 +1,6 @@
 import gymnasium as gym
 import numpy as np
-from graph_map import WaypointGraph
+from graph_map import WaypointGraph, path_point_altitude, path_point_node
 from drone import Drone
 from statuses import DroneStatus, EventCode, EventLevel
 from energy_model import rain_factor
@@ -33,6 +33,10 @@ class DeliveryEnv(gym.Env):
         self.wind_speed = 0.0
         self.ambient_temp = 25.0
         self.is_raining = False
+        self.vertical_speed = config.get('drone', {}).get('vertical_speed', 3.0)
+        self.current_target_altitude = self.drone.normal_altitude
+        self.altitude_change_rate = 0.0
+        self.last_climbing = False
 
     def queue_event(self, level, code, message):
         self.pending_events.append({
@@ -78,7 +82,7 @@ class DeliveryEnv(gym.Env):
         self.step_count = 0
 
         print("Dang tinh toan quy dao goc...")
-        raw_path = self.graph.a_star(
+        raw_path = self.graph.a_star_2_5d(
             self.graph.start,
             self.current_target_node,
             current_altitude=self.drone.altitude,
@@ -88,6 +92,9 @@ class DeliveryEnv(gym.Env):
             is_raining=self.is_raining
         )
         self.path = self.graph.smooth_path(raw_path, self.drone.altitude)
+        self.current_target_altitude = self._next_target_altitude()
+        self.altitude_change_rate = 0.0
+        self.last_climbing = False
         if self.path:
             self.drone.status = DroneStatus.FLYING.value
         else:
@@ -107,6 +114,34 @@ class DeliveryEnv(gym.Env):
         })
         print(f"Ve tinh bao cao vat can {obstacle_type} tai GPS {latlng}, r={radius}m, h={height}m")
 
+    def _path_node(self, point):
+        return path_point_node(point)
+
+    def _path_altitude(self, point, default_altitude=None):
+        if default_altitude is None:
+            default_altitude = self.drone.altitude
+        return path_point_altitude(point, default_altitude)
+
+    def _next_target_altitude(self):
+        if self.path and self.path_index < len(self.path) - 1:
+            return self._path_altitude(self.path[self.path_index + 1], self.drone.altitude)
+        if self.path:
+            return self._path_altitude(self.path[-1], self.drone.altitude)
+        return self.drone.altitude
+
+    def _plan_path(self, start, goal, current_altitude=None):
+        if current_altitude is None:
+            current_altitude = self.drone.altitude
+        return self.graph.a_star_2_5d(
+            start,
+            goal,
+            current_altitude=current_altitude,
+            wind_dir=self.wind_dir,
+            wind_speed=self.wind_speed,
+            ambient_temp=self.ambient_temp,
+            is_raining=self.is_raining
+        )
+
     def _get_obs(self):
         return {
             "pos": self.drone.pos,
@@ -124,7 +159,12 @@ class DeliveryEnv(gym.Env):
             "windDir": self.wind_dir,
             "windSpeed": self.wind_speed,
             "ambientTemp": self.ambient_temp,
-            "isRaining": self.is_raining
+            "isRaining": self.is_raining,
+            "targetAltitude": self.current_target_altitude,
+            "altitudeChangeRate": self.altitude_change_rate,
+            "verticalSpeed": self.vertical_speed,
+            "currentPathIndex": self.path_index,
+            "pathLength": len(self.path)
         }
 
     def _current_grid_node(self):
@@ -140,15 +180,7 @@ class DeliveryEnv(gym.Env):
         best_cost = float("inf")
 
         for station_node in self.graph.charging_stations:
-            path = self.graph.a_star(
-                self.drone.node,
-                station_node,
-                current_altitude=self.drone.altitude,
-                wind_dir=self.wind_dir,
-                wind_speed=self.wind_speed,
-                ambient_temp=self.ambient_temp,
-                is_raining=self.is_raining
-            )
+            path = self._plan_path(self.drone.node, station_node)
             if not path:
                 continue
 
@@ -211,36 +243,23 @@ class DeliveryEnv(gym.Env):
                 self.drone.status = DroneStatus.REROUTING.value
 
                 self.drone.node = self._current_grid_node()
-                raw_path = self.graph.a_star(
-                    self.drone.node,
-                    self.current_target_node,
-                    current_altitude=self.drone.altitude,
-                    wind_dir=self.wind_dir,
-                    wind_speed=self.wind_speed,
-                    ambient_temp=self.ambient_temp,
-                    is_raining=self.is_raining
-                )
+                raw_path = self._plan_path(self.drone.node, self.current_target_node)
 
                 if raw_path:
                     self.path = self.graph.smooth_path(raw_path, self.drone.altitude)
                     self.path_index = 0
+                    self.current_target_altitude = self._next_target_altitude()
                     self.drone.status = DroneStatus.FLYING.value
                     self.queue_event(EventLevel.INFO.value, EventCode.PATH_REPLANNED.value, "Path replanned around obstacle.")
                 else:
                     print("Het duong lach, thu tang do cao pop-up...")
-                    self.drone.altitude = min(self.drone.max_altitude, self.drone.altitude + self.altitude_boost)
-                    raw_path = self.graph.a_star(
-                        self.drone.node,
-                        self.current_target_node,
-                        current_altitude=self.drone.altitude,
-                        wind_dir=self.wind_dir,
-                        wind_speed=self.wind_speed,
-                        ambient_temp=self.ambient_temp,
-                        is_raining=self.is_raining
-                    )
+                    boosted_altitude = min(self.drone.max_altitude, self.drone.altitude + self.altitude_boost)
+                    raw_path = self._plan_path(self.drone.node, self.current_target_node, boosted_altitude)
                     if raw_path:
                         self.path = self.graph.smooth_path(raw_path, self.drone.altitude)
+                        self.path.insert(0, {"node": self.drone.node, "altitude": float(self.drone.altitude)})
                         self.path_index = 0
+                        self.current_target_altitude = self._next_target_altitude()
                         self.drone.status = DroneStatus.FLYING.value
                         self.queue_event(EventLevel.INFO.value, EventCode.PATH_REPLANNED.value, "Path replanned after altitude pop-up.")
                     else:
@@ -250,8 +269,6 @@ class DeliveryEnv(gym.Env):
             self.avoid_timer -= dt
             if self.avoid_timer <= 0:
                 self.avoiding = False
-                if self.drone.altitude > self.drone.normal_altitude:
-                    self.drone.altitude = self.drone.normal_altitude
                 self.avoid_direction = 0
                 print("Ket thuc ne tranh, quay lai bay binh thuong")
 
@@ -277,17 +294,10 @@ class DeliveryEnv(gym.Env):
                 self.current_target_node = self.graph.goal
                 self.current_target_type = "goal"
                 self.drone.status = DroneStatus.PLANNING.value
-                raw_path = self.graph.a_star(
-                    self.drone.node,
-                    self.current_target_node,
-                    current_altitude=self.drone.altitude,
-                    wind_dir=self.wind_dir,
-                    wind_speed=self.wind_speed,
-                    ambient_temp=self.ambient_temp,
-                    is_raining=self.is_raining
-                )
+                raw_path = self._plan_path(self.drone.node, self.current_target_node)
                 self.path = self.graph.smooth_path(raw_path, self.drone.altitude)
                 self.path_index = 0
+                self.current_target_altitude = self._next_target_altitude()
                 self.charging_mode = False
                 if self.path:
                     self.drone.status = DroneStatus.FLYING.value
@@ -315,6 +325,7 @@ class DeliveryEnv(gym.Env):
                 self.drone.status = DroneStatus.PLANNING.value
                 self.path = self.graph.smooth_path(station_path, self.drone.altitude)
                 self.path_index = 0
+                self.current_target_altitude = self._next_target_altitude()
                 self.drone.status = DroneStatus.FLYING.value if self.path else DroneStatus.EMERGENCY_LANDING.value
                 self.queue_event(EventLevel.INFO.value, EventCode.PATH_REPLANNED.value, f"Low battery: rerouting to charging station, cost={station_cost:.1f}.")
             else:
@@ -322,13 +333,30 @@ class DeliveryEnv(gym.Env):
                 self.queue_event(EventLevel.ERROR.value, EventCode.EMERGENCY_LANDING.value, "Low battery and no reachable charging station.")
                 return self._get_obs(), 0, True, truncated, {}
 
+        self.altitude_change_rate = 0.0
+        self.last_climbing = False
         if self.path and self.path_index < len(self.path) - 1:
-            next_node = self.path[self.path_index + 1]
+            next_point = self.path[self.path_index + 1]
+            next_node = self._path_node(next_point)
+            target_altitude = self._path_altitude(next_point, self.drone.altitude)
+            self.current_target_altitude = target_altitude
             x2, y2 = self.graph.nodes[next_node]
+
+            alt_delta = target_altitude - self.drone.altitude
+            max_alt_change = max(0.0, self.vertical_speed) * dt
+            self.last_climbing = alt_delta > 0.1
+            if max_alt_change <= 0 or abs(alt_delta) <= max_alt_change:
+                self.altitude_change_rate = alt_delta / dt if dt > 0 else 0.0
+                self.drone.altitude = target_altitude
+            else:
+                alt_step = np.sign(alt_delta) * max_alt_change
+                self.altitude_change_rate = alt_step / dt if dt > 0 else 0.0
+                self.drone.altitude += alt_step
 
             dx = x2 - self.drone.pos[0]
             dy = y2 - self.drone.pos[1]
             dist = np.hypot(dx, dy)
+            horizontal_reached = dist <= 1e-4
 
             if dist > 0:
                 self.drone.heading = np.degrees(np.arctan2(dy, dx))
@@ -339,13 +367,25 @@ class DeliveryEnv(gym.Env):
                     self.drone.pos[0] + dx * ratio,
                     self.drone.pos[1] + dy * ratio
                 )
-
-                if dist <= self.drone.speed * dt + 1e-4:
-                    self.path_index += 1
+                horizontal_reached = dist <= effective_speed * dt + 1e-4
+                if horizontal_reached:
                     self.drone.node = next_node
                     self.drone.pos = (x2, y2)
 
-        if self.drone.node == self.current_target_node:
+            altitude_reached = abs(target_altitude - self.drone.altitude) <= 1e-3
+            if horizontal_reached and altitude_reached:
+                self.path_index += 1
+                self.drone.node = next_node
+                self.drone.pos = (x2, y2)
+                self.drone.altitude = target_altitude
+                self.current_target_altitude = self._next_target_altitude()
+
+        target_reached = (
+            self.drone.node == self.current_target_node
+            and (not self.path or self.path_index >= len(self.path) - 1)
+        )
+
+        if target_reached:
             if self.current_target_type == "charging_station":
                 if self.drone.status != DroneStatus.CHARGING.value:
                     self.path = []
@@ -363,13 +403,12 @@ class DeliveryEnv(gym.Env):
             terminated = True
 
         if self.drone.status == DroneStatus.FLYING.value:
-            climbing = self.drone.altitude > self.drone.normal_altitude
             is_shielded = self.graph.check_wind_shadow(
                 self.drone.node, self.wind_dir, self.drone.altitude
             )
             self.drone.consume_battery(
                 dt,
-                climbing,
+                self.last_climbing,
                 wind_speed=self.wind_speed,
                 wind_dir=self.wind_dir,
                 heading=self.drone.heading,

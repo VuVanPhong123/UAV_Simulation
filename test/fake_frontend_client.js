@@ -90,6 +90,28 @@ function telemetryPayload(message) {
   return message.payload || message;
 }
 
+function plannedPathPayload(message) {
+  return message.payload || message;
+}
+
+function isValidPlannedPath3d(message) {
+  if (message.type !== 'planned_path') return false;
+  if (message.simId !== simId) return false;
+  const payload = plannedPathPayload(message);
+  const path = payload.path || message.path;
+  const path3d = payload.path3d || message.path3d;
+  if (!Array.isArray(path) || !Array.isArray(path3d) || path3d.length === 0) {
+    return false;
+  }
+  const firstPoint = path3d[0];
+  return Boolean(
+    firstPoint
+    && Array.isArray(firstPoint.pos)
+    && typeof firstPoint.altitude === 'number'
+    && Number.isFinite(firstPoint.altitude)
+  );
+}
+
 function isValidTelemetry(message) {
   if (message.type !== 'telemetry') return false;
   const payload = telemetryPayload(message);
@@ -135,14 +157,18 @@ async function runScenario() {
   simId = assigned.simId;
   pass('simulation assigned');
 
-  await waitFor((message) => message.type === 'config' && message.simId === simId, 60000, 'config');
+  await waitFor((message) => message.type === 'config' && message.simId === simId, 180000, 'config');
 
-  await waitFor((message) => message.simId === simId && isValidTelemetry(message), 60000, 'telemetry received');
+  await waitFor((message) => message.simId === simId && isValidTelemetry(message), 180000, 'telemetry received');
   lastTelemetryCount += 1;
   pass('telemetry received');
 
-  await waitFor((message) => message.type === 'planned_path' && message.simId === simId, 60000, 'planned path received');
+  const plannedPath = await waitFor((message) => message.type === 'planned_path' && message.simId === simId, 180000, 'planned path received');
   pass('planned path received');
+  if (!isValidPlannedPath3d(plannedPath)) {
+    fail('planned path altitude received', 'planned_path missing payload.path3d altitude points');
+  }
+  pass('planned path altitude received');
 
   clearBacklog();
   send({

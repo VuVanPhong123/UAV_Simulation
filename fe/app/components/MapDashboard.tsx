@@ -17,6 +17,11 @@ const MapEvents = dynamic(() => import('./MapEvents'), { ssr: false });
 
 type LatLng = [number, number];
 
+type Path3DPoint = {
+    pos: LatLng;
+    altitude: number;
+};
+
 type TelemetryState = {
     pos?: LatLng;
     battery?: number;
@@ -31,6 +36,10 @@ type TelemetryState = {
     windSpeed?: number;
     ambientTemp?: number;
     isRaining?: boolean;
+    targetAltitude?: number;
+    altitudeChangeRate?: number;
+    currentPathIndex?: number;
+    pathLength?: number;
 };
 
 type MapConfig = {
@@ -60,10 +69,11 @@ type IncomingMessage = {
     status?: string;
     message?: string;
     latencyMs?: number;
-    payload?: TelemetryState & { zones?: LatLng[]; path?: LatLng[]; level?: string; code?: string; message?: string; status?: string };
+    payload?: TelemetryState & { zones?: LatLng[]; path?: LatLng[]; path3d?: Path3DPoint[]; level?: string; code?: string; message?: string; status?: string };
     pos?: LatLng;
     zones?: LatLng[];
     path?: LatLng[];
+    path3d?: Path3DPoint[];
 };
 
 type ServerStatus = 'connecting' | 'connected' | 'disconnected';
@@ -85,6 +95,7 @@ export default function MapDashboard() {
     const [eventLogs, setEventLogs] = useState<EventLog[]>([]);
 
     const [plannedPath, setPlannedPath] = useState<[number, number][]>([]);
+    const [plannedPath3d, setPlannedPath3d] = useState<Path3DPoint[]>([]);
 
     const [dynamicObstacles, setDynamicObstacles] = useState<DynamicObstacle[]>([]);
     const [windShadowZones, setWindShadowZones] = useState<[number, number][]>([]);
@@ -176,7 +187,9 @@ export default function MapDashboard() {
             }
             else if (data.type === 'planned_path') {
                 const path = data.payload?.path ?? data.path ?? [];
+                const path3d = data.payload?.path3d ?? data.path3d ?? [];
                 setPlannedPath(path);
+                setPlannedPath3d(path3d);
             } else if (data.type === 'event') {
                 const eventPayload = data.payload ?? {};
                 addEventLog(
@@ -244,6 +257,7 @@ export default function MapDashboard() {
             setPathHistory([]);
             setWindShadowZones([]);
             setPlannedPath([]);
+            setPlannedPath3d([]);
         }
     };
 
@@ -305,6 +319,27 @@ export default function MapDashboard() {
         const step = Math.ceil(windShadowZones.length / 2000);
         return windShadowZones.filter((_, idx) => idx % step === 0);
     }, [windShadowZones]);
+
+    const altitudeSummary = useMemo(() => {
+        const altitudes = plannedPath3d
+            .map(point => Number(point.altitude))
+            .filter(altitude => Number.isFinite(altitude));
+        if (altitudes.length === 0) {
+            return null;
+        }
+        let changes = 0;
+        for (let idx = 1; idx < altitudes.length; idx += 1) {
+            if (Math.abs(altitudes[idx] - altitudes[idx - 1]) > 0.1) {
+                changes += 1;
+            }
+        }
+        return {
+            min: Math.min(...altitudes),
+            max: Math.max(...altitudes),
+            changes,
+            points: altitudes.length
+        };
+    }, [plannedPath3d]);
 
     const staticMapLayers = useMemo(() => {
         return (
@@ -393,6 +428,8 @@ export default function MapDashboard() {
                             <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 font-mono text-xs font-bold text-slate-700">
                                 <span>Pin</span><span>{battery !== undefined ? Number(battery).toFixed(1) : '--'}%</span>
                                 <span>Do cao</span><span>{droneState.altitude ?? '--'}m</span>
+                                <span>Target alt</span><span>{droneState.targetAltitude !== undefined ? `${Number(droneState.targetAltitude).toFixed(1)}m` : '--'}</span>
+                                <span>Alt rate</span><span>{droneState.altitudeChangeRate !== undefined ? `${Number(droneState.altitudeChangeRate).toFixed(1)}m/s` : '--'}</span>
                                 <span>Toc do</span><span>{droneState.speed ?? '--'}m/s</span>
                                 <span>Heading</span><span>{droneState.heading !== undefined ? Number(droneState.heading).toFixed(1) : '--'}°</span>
                                 <span>Nhiet do</span><span>{droneState.temperature !== undefined ? Number(droneState.temperature).toFixed(1) : '--'}°C</span>
@@ -400,7 +437,17 @@ export default function MapDashboard() {
                                 <span>Wind to</span><span>{droneState.windDir !== undefined ? `${Number(droneState.windDir).toFixed(0)}°` : '--'}</span>
                                 <span>Ambient</span><span>{droneState.ambientTemp !== undefined ? `${Number(droneState.ambientTemp).toFixed(1)}°C` : '--'}</span>
                                 <span>Rain</span><span>{droneState.isRaining ? 'on' : 'off'}</span>
+                                <span>Path idx</span><span>{droneState.currentPathIndex !== undefined && droneState.pathLength !== undefined ? `${droneState.currentPathIndex}/${droneState.pathLength}` : '--'}</span>
                                 <span>Step</span><span>{droneState.step ?? '--'}</span>
+                            </div>
+                        </div>
+                        <div className="p-3 bg-white rounded border border-slate-200">
+                            <p className="text-[10px] uppercase font-bold text-slate-400">Path Altitude</p>
+                            <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 font-mono text-xs font-bold text-slate-700">
+                                <span>Min</span><span>{altitudeSummary ? `${altitudeSummary.min.toFixed(1)}m` : '--'}</span>
+                                <span>Max</span><span>{altitudeSummary ? `${altitudeSummary.max.toFixed(1)}m` : '--'}</span>
+                                <span>Changes</span><span>{altitudeSummary ? altitudeSummary.changes : '--'}</span>
+                                <span>Points</span><span>{altitudeSummary ? altitudeSummary.points : '--'}</span>
                             </div>
                         </div>
                     </div>

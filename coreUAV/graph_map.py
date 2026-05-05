@@ -5,11 +5,28 @@ from pyproj import Transformer
 from shapely.geometry import Point
 from energy_model import rain_factor, temperature_factor, wind_factor
 
+
+ALTITUDE_LEVELS = [20.0, 35.0, 50.0, 70.0, 90.0, 120.0]
+
+
+def path_point_node(point):
+    if isinstance(point, dict):
+        return point["node"]
+    return point
+
+
+def path_point_altitude(point, default_altitude):
+    if isinstance(point, dict):
+        return float(point.get("altitude", default_altitude))
+    return float(default_altitude)
+
+
 class WaypointGraph:
     def __init__(self, config):
         self.config = config
         self.resolution = 5.0
         self.safety_margin = config.get('obstacle_avoidance', {}).get('safety_margin', 5.0)
+        self.altitude_levels = self._build_altitude_levels(config)
         print("Đang nạp dữ liệu tòa nhà 2.5D...")
         self.buildings = gpd.read_file('hanoi_buildings.geojson')
         
@@ -22,6 +39,35 @@ class WaypointGraph:
         self.dynamic_obstacles = []
         
         print(f"-> Môi trường 2.5D hoàn tất với {self.cols}x{self.rows} mắt lưới!")
+
+    def _build_altitude_levels(self, config):
+        drone_config = config.get("drone", {})
+        min_altitude = float(drone_config.get("min_altitude", min(ALTITUDE_LEVELS)))
+        normal_altitude = float(drone_config.get("normal_altitude", 20.0))
+        max_altitude = float(drone_config.get("max_altitude", max(ALTITUDE_LEVELS)))
+
+        if max_altitude < min_altitude:
+            min_altitude, max_altitude = max_altitude, min_altitude
+
+        candidates = [
+            float(level) for level in ALTITUDE_LEVELS
+            if min_altitude <= float(level) <= max_altitude
+        ]
+        candidates.extend([min_altitude, normal_altitude, max_altitude])
+        clamped = [
+            max(min_altitude, min(max_altitude, float(level)))
+            for level in candidates
+        ]
+        return sorted(set(clamped))
+
+    def get_nearest_altitude_level(self, altitude):
+        if not self.altitude_levels:
+            return float(altitude)
+        return min(self.altitude_levels, key=lambda level: abs(level - float(altitude)))
+
+    def get_altitude_index(self, altitude):
+        nearest = self.get_nearest_altitude_level(altitude)
+        return self.altitude_levels.index(nearest)
 
     def is_in_nfz(self, node):
         x, y = self.nodes.get(node, (0, 0))
@@ -54,6 +100,20 @@ class WaypointGraph:
                     continue
                 return True
         return False
+
+    def is_node_clear_at_altitude(self, node, altitude):
+        """
+        Return True if node can be occupied at this altitude.
+        """
+        if node not in self.nodes:
+            return False
+        if self.is_in_nfz(node):
+            return False
+        if self.heights.get(node, 0.0) + self.safety_margin >= altitude:
+            return False
+        if self.is_in_dynamic_obs(node, altitude):
+            return False
+        return True
     
     def clear_dynamic_obstacles(self):
         self.dynamic_obstacles = []
@@ -248,7 +308,131 @@ class WaypointGraph:
             return path
         print(f"   [A*] THẤT BẠI: Bị kẹt, không thể tìm thấy đường đi!")
         return []
-    
+
+    def a_star_2_5d(
+        self,
+        start,
+        goal,
+        current_altitude=20.0,
+        wind_dir=0.0,
+        wind_speed=0.0,
+        ambient_temp=25.0,
+        is_raining=False
+    ):
+        print(f"   [A* 2.5D] Planning from {start} to {goal} | wind {wind_speed}m/s to {wind_dir} deg")
+
+        if start not in self.nodes or goal not in self.nodes:
+            print("   [A* 2.5D] Failed: start or goal is outside graph.")
+            return []
+
+        normal_altitude = float(self.config.get("drone", {}).get("normal_altitude", current_altitude))
+        start_idx = self.get_altitude_index(current_altitude)
+
+        if not self.is_node_clear_at_altitude(start, self.altitude_levels[start_idx]):
+            clear_indices = [
+                idx for idx, level in enumerate(self.altitude_levels)
+                if self.is_node_clear_at_altitude(start, level)
+            ]
+            if not clear_indices:
+                print("   [A* 2.5D] Failed: start node is blocked at all altitude levels.")
+                return []
+            start_idx = min(clear_indices, key=lambda idx: abs(self.altitude_levels[idx] - current_altitude))
+
+        if not any(self.is_node_clear_at_altitude(goal, level) for level in self.altitude_levels):
+            print("   [A* 2.5D] Failed: goal node is blocked at all altitude levels.")
+            return []
+
+        start_state = (start[0], start[1], start_idx)
+        frontier = []
+        heapq.heappush(frontier, (0.0, start_state))
+        came_from = {start_state: None}
+        cost_so_far = {start_state: 0.0}
+
+        directions = [
+            (0, 1, 1.0), (1, 0, 1.0), (0, -1, 1.0), (-1, 0, 1.0),
+            (1, 1, 1.4142), (-1, 1, 1.4142), (1, -1, 1.4142), (-1, -1, 1.4142)
+        ]
+        weight = 1.8
+        goal_state = None
+
+        while frontier:
+            _, current_state = heapq.heappop(frontier)
+            current_node = (current_state[0], current_state[1])
+            altitude_idx = current_state[2]
+            altitude = self.altitude_levels[altitude_idx]
+
+            if current_node == goal:
+                goal_state = current_state
+                break
+
+            for dx, dy, step_dist in directions:
+                nxt = (current_node[0] + dx, current_node[1] + dy)
+                if not (0 <= nxt[0] < self.cols and 0 <= nxt[1] < self.rows):
+                    continue
+                if not self.is_node_clear_at_altitude(nxt, altitude):
+                    continue
+
+                next_state = (nxt[0], nxt[1], altitude_idx)
+                energy_multiplier = self.get_energy_multiplier(
+                    current_node,
+                    nxt,
+                    wind_dir,
+                    wind_speed,
+                    altitude,
+                    ambient_temp,
+                    is_raining
+                )
+                movement_cost = (step_dist * self.resolution) * energy_multiplier
+                altitude_penalty = 0.01 * max(0.0, altitude - normal_altitude)
+                new_cost = cost_so_far[current_state] + movement_cost + altitude_penalty
+
+                if next_state not in cost_so_far or new_cost < cost_so_far[next_state]:
+                    cost_so_far[next_state] = new_cost
+                    altitude_bias = abs(altitude - normal_altitude) * 0.1
+                    priority = new_cost + (weight * self.heuristic(nxt, goal)) + altitude_bias
+                    heapq.heappush(frontier, (priority, next_state))
+                    came_from[next_state] = current_state
+
+            for next_altitude_idx in (altitude_idx - 1, altitude_idx + 1):
+                if not (0 <= next_altitude_idx < len(self.altitude_levels)):
+                    continue
+                next_altitude = self.altitude_levels[next_altitude_idx]
+                if not self.is_node_clear_at_altitude(current_node, next_altitude):
+                    continue
+
+                next_state = (current_node[0], current_node[1], next_altitude_idx)
+                climb_m = abs(next_altitude - altitude)
+                transition_cost = climb_m * (2.0 if next_altitude > altitude else 0.5)
+                new_cost = cost_so_far[current_state] + transition_cost
+
+                if next_state not in cost_so_far or new_cost < cost_so_far[next_state]:
+                    cost_so_far[next_state] = new_cost
+                    altitude_bias = abs(next_altitude - normal_altitude) * 0.1
+                    priority = new_cost + (weight * self.heuristic(current_node, goal)) + altitude_bias
+                    heapq.heappush(frontier, (priority, next_state))
+                    came_from[next_state] = current_state
+
+        if goal_state is None:
+            print("   [A* 2.5D] Failed: no safe path found.")
+            return []
+
+        states = []
+        state = goal_state
+        while state is not None:
+            states.append(state)
+            state = came_from.get(state)
+        states.reverse()
+
+        path = [
+            {
+                "node": (state[0], state[1]),
+                "altitude": float(self.altitude_levels[state[2]])
+            }
+            for state in states
+        ]
+        print(f"   [A* 2.5D] Found path with {len(path)} points.")
+        return path
+
     def clear_dynamic_obstacles(self):
         self.dynamic_obstacles = []
         print("   [Graph] Đã dọn dẹp toàn bộ vật cản động khỏi bản đồ.")
@@ -265,11 +449,7 @@ class WaypointGraph:
         
         while True:
             if (x0, y0) != (int(node_a[0]), int(node_a[1])) and (x0, y0) != (int(node_b[0]), int(node_b[1])):
-                if self.heights.get((x0, y0), 0.0) >= altitude:
-                    return False
-                if self.is_in_nfz((x0, y0)):
-                    return False
-                if self.is_in_dynamic_obs((x0, y0), altitude):
+                if not self.is_node_clear_at_altitude((x0, y0), altitude):
                     return False
             if x0 == x1 and y0 == y1:
                 break
@@ -285,19 +465,36 @@ class WaypointGraph:
         return True
 
     def smooth_path(self, raw_path, altitude):
-        if not raw_path or len(raw_path) <= 2: 
-            return raw_path
+        if not raw_path:
+            return []
+        points = [
+            {
+                "node": path_point_node(point),
+                "altitude": path_point_altitude(point, altitude)
+            }
+            for point in raw_path
+        ]
+        if len(points) <= 2:
+            return points
         
         print(f"   [Làm mịn] Đang ép thẳng quỹ đạo bay...")
-        smoothed = [raw_path[0]]
+        smoothed = [points[0]]
         curr = 0
-        while curr < len(raw_path) - 1:
-            next_node = len(raw_path) - 1
+        while curr < len(points) - 1:
+            next_node = len(points) - 1
             while next_node > curr + 1:
-                if self.is_line_of_sight(raw_path[curr], raw_path[next_node], altitude):
+                segment_altitude = min(
+                    path_point_altitude(points[curr], altitude),
+                    path_point_altitude(points[next_node], altitude)
+                )
+                if self.is_line_of_sight(
+                    path_point_node(points[curr]),
+                    path_point_node(points[next_node]),
+                    segment_altitude
+                ):
                     break
                 next_node -= 1
-            smoothed.append(raw_path[next_node])
+            smoothed.append(points[next_node])
             curr = next_node
             
         print(f"   [Làm mịn] Rút gọn từ {len(raw_path)} node xuống còn {len(smoothed)} node.")
@@ -310,7 +507,12 @@ class WaypointGraph:
             return 0.0
 
         total = 0.0
-        for current, nxt in zip(path, path[1:]):
+        for current_point, next_point in zip(path, path[1:]):
+            current = path_point_node(current_point)
+            nxt = path_point_node(next_point)
+            current_altitude = path_point_altitude(current_point, altitude)
+            next_altitude = path_point_altitude(next_point, altitude)
+            segment_altitude = min(current_altitude, next_altitude)
             dx = nxt[0] - current[0]
             dy = nxt[1] - current[1]
             step_dist = np.hypot(dx, dy)
@@ -319,11 +521,15 @@ class WaypointGraph:
                 nxt,
                 wind_dir,
                 wind_speed,
-                altitude,
+                segment_altitude,
                 ambient_temp,
                 is_raining
             )
             total += step_dist * self.resolution * energy_multiplier
+            if next_altitude > current_altitude:
+                total += (next_altitude - current_altitude) * 2.0
+            elif next_altitude < current_altitude:
+                total += (current_altitude - next_altitude) * 0.5
         return total
 
     def get_wind_shadow_nodes(self, wind_dir_deg, altitude, shadow_length=5):

@@ -5,6 +5,7 @@ import websocket
 from websocket import create_connection
 from pyproj import Transformer
 from environment import DeliveryEnv
+from graph_map import path_point_altitude, path_point_node
 from statuses import DroneStatus, EventCode, EventLevel
 from energy_model import rain_factor
 
@@ -105,6 +106,10 @@ def main():
             "windSpeed": float(env.wind_speed),
             "ambientTemp": float(env.ambient_temp),
             "isRaining": bool(env.is_raining),
+            "targetAltitude": float(getattr(env, "current_target_altitude", env.drone.altitude)),
+            "altitudeChangeRate": float(getattr(env, "altitude_change_rate", 0.0)),
+            "currentPathIndex": int(getattr(env, "path_index", 0)),
+            "pathLength": int(len(getattr(env, "path", []))),
             "step": step,
             "terminated": terminated
         }
@@ -127,6 +132,10 @@ def main():
             "windSpeed": payload["windSpeed"],
             "ambientTemp": payload["ambientTemp"],
             "isRaining": payload["isRaining"],
+            "targetAltitude": payload["targetAltitude"],
+            "altitudeChangeRate": payload["altitudeChangeRate"],
+            "currentPathIndex": payload["currentPathIndex"],
+            "pathLength": payload["pathLength"],
             "terminated": payload["terminated"]
         }))
 
@@ -155,14 +164,25 @@ def main():
             return
 
         gps_path = []
+        gps_path3d = []
         if env.drone.pos:
             lon_d, lat_d = transformer.transform(env.drone.pos[0], env.drone.pos[1])
             gps_path.append([lat_d, lon_d])
+            gps_path3d.append({
+                "pos": [lat_d, lon_d],
+                "altitude": float(env.drone.altitude)
+            })
 
-        for node in env.path[env.path_index:]:
+        for point in env.path[env.path_index:]:
+            node = path_point_node(point)
+            altitude = path_point_altitude(point, env.drone.altitude)
             x, y = env.graph.nodes[node]
             lon, lat = transformer.transform(x, y)
             gps_path.append([lat, lon])
+            gps_path3d.append({
+                "pos": [lat, lon],
+                "altitude": float(altitude)
+            })
 
         ws.send(json.dumps({
             "type": "planned_path",
@@ -170,9 +190,11 @@ def main():
             "droneId": DRONE_ID,
             "timestamp": now_ms(),
             "payload": {
-                "path": gps_path
+                "path": gps_path,
+                "path3d": gps_path3d
             },
-            "path": gps_path
+            "path": gps_path,
+            "path3d": gps_path3d
         }))
 
     def send_simulation_finished(status):
@@ -289,7 +311,7 @@ def main():
                 env.drone.node = (cx, cy)
                 env.drone.status = DroneStatus.PLANNING.value
 
-                raw_path = env.graph.a_star(
+                raw_path = env.graph.a_star_2_5d(
                     env.drone.node,
                     env.current_target_node,
                     current_altitude=env.drone.altitude,
@@ -300,6 +322,7 @@ def main():
                 )
                 env.path = env.graph.smooth_path(raw_path, env.drone.altitude)
                 env.path_index = 0
+                env.current_target_altitude = env._next_target_altitude()
                 env.drone.status = DroneStatus.FLYING.value if env.path else DroneStatus.FAILED.value
                 send_wind_shadow_zones()
                 send_planned_path()
