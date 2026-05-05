@@ -65,6 +65,13 @@ type IncomingMessage = {
 type ServerStatus = 'connecting' | 'connected' | 'disconnected';
 type WorkerStatus = 'idle' | 'busy' | 'disconnected' | 'error' | 'unknown';
 type SimulationStatus = 'idle' | 'running' | 'stopped' | 'failed';
+type ObstacleType = 'unknown' | 'tree' | 'pole' | 'bird' | 'building_crane';
+type DynamicObstacle = LatLng | {
+    pos: LatLng;
+    radius: number;
+    height: number;
+    obstacleType: ObstacleType;
+};
 
 export default function MapDashboard() {
     const [buildings, setBuildings] = useState<GeoJsonObject | null>(null);
@@ -75,9 +82,14 @@ export default function MapDashboard() {
 
     const [plannedPath, setPlannedPath] = useState<[number, number][]>([]);
 
-    const [dynamicObstacles, setDynamicObstacles] = useState<[number, number][]>([]);
+    const [dynamicObstacles, setDynamicObstacles] = useState<DynamicObstacle[]>([]);
     const [windShadowZones, setWindShadowZones] = useState<[number, number][]>([]);
     const [weather, setWeather] = useState({ wind_dir: 0, wind_speed: 0, ambient_temp: 25 });
+    const [obstacleConfig, setObstacleConfig] = useState({
+        radius: 8,
+        height: 25,
+        obstacleType: 'unknown' as ObstacleType
+    });
     const [serverStatus, setServerStatus] = useState<ServerStatus>('connecting');
     const [workerStatus, setWorkerStatus] = useState<WorkerStatus>('unknown');
     const [simulationStatus, setSimulationStatus] = useState<SimulationStatus>('idle');
@@ -191,8 +203,18 @@ export default function MapDashboard() {
             addEventLog('warning', 'NO_ACTIVE_SIMULATION', 'Start a simulation before adding obstacles.');
             return;
         }
-        setDynamicObstacles(prev => [...prev, latlng]);
-        wsRef.current?.send(JSON.stringify({ type: 'add_obstacle', simId: activeSimId, pos: latlng }));
+        const obstacle = {
+            pos: latlng,
+            radius: obstacleConfig.radius,
+            height: obstacleConfig.height,
+            obstacleType: obstacleConfig.obstacleType
+        };
+        setDynamicObstacles(prev => [...prev, obstacle]);
+        wsRef.current?.send(JSON.stringify({
+            type: 'add_obstacle',
+            simId: activeSimId,
+            payload: obstacle
+        }));
     };
 
     const sendCommand = (action: 'start' | 'reset') => {
@@ -225,6 +247,10 @@ export default function MapDashboard() {
         setWeather(prev => ({ ...prev, [key]: value }));
     };
 
+    const handleObstacleChange = (key: keyof typeof obstacleConfig, value: number | ObstacleType) => {
+        setObstacleConfig(prev => ({ ...prev, [key]: value }));
+    };
+
     const applyWeatherUpdate = () => {
         if (!activeSimId) {
             addEventLog('warning', 'NO_ACTIVE_SIMULATION', 'Start a simulation before changing weather.');
@@ -238,6 +264,21 @@ export default function MapDashboard() {
     const battery = droneState?.batteryPercent ?? droneState?.battery;
     const startDisabled = serverStatus !== 'connected' || workerStatus !== 'idle' || simulationStatus === 'running';
     const resetDisabled = !activeSimId;
+    const droneStatus = droneState?.status;
+    const droneColor = droneStatus === 'failed' || droneStatus === 'emergency_landing'
+        ? '#dc2626'
+        : droneStatus === 'charging'
+            ? '#f59e0b'
+            : droneStatus === 'success'
+                ? '#16a34a'
+                : '#2563eb';
+    const droneHaloColor = droneStatus === 'failed' || droneStatus === 'emergency_landing'
+        ? '#fca5a5'
+        : droneStatus === 'charging'
+            ? '#fde68a'
+            : droneStatus === 'success'
+                ? '#86efac'
+                : '#93c5fd';
     const eventLevelClass = (level: string) => {
         if (level === 'error') return 'text-red-600';
         if (level === 'warning') return 'text-amber-600';
@@ -307,9 +348,27 @@ export default function MapDashboard() {
                     <div className="flex flex-col gap-1"><label className="text-[11px] font-semibold text-slate-600">Nhiet do: {weather.ambient_temp}°C</label><input type="range" min="-10" max="50" value={weather.ambient_temp} onChange={e => handleWeatherChange('ambient_temp', parseInt(e.target.value))} className="w-full" /></div>
                     <button onClick={applyWeatherUpdate} className="mt-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 rounded shadow-sm text-xs transition-colors">AP DUNG THOI TIET</button>
                 </div>
+                <div className="flex flex-col gap-3 p-4 bg-white rounded border border-slate-200">
+                    <h3 className="text-sm font-bold text-slate-700 border-b pb-2">Obstacle</h3>
+                    <div className="flex flex-col gap-1">
+                        <label className="text-[11px] font-semibold text-slate-600">Radius: {obstacleConfig.radius}m</label>
+                        <input type="range" min="2" max="30" value={obstacleConfig.radius} onChange={e => handleObstacleChange('radius', parseInt(e.target.value))} className="w-full" />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                        <label className="text-[11px] font-semibold text-slate-600">Height: {obstacleConfig.height}m</label>
+                        <input type="range" min="5" max="120" value={obstacleConfig.height} onChange={e => handleObstacleChange('height', parseInt(e.target.value))} className="w-full" />
+                    </div>
+                    <select value={obstacleConfig.obstacleType} onChange={e => handleObstacleChange('obstacleType', e.target.value as ObstacleType)} className="rounded border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-700">
+                        <option value="unknown">unknown</option>
+                        <option value="tree">tree</option>
+                        <option value="pole">pole</option>
+                        <option value="bird">bird</option>
+                        <option value="building_crane">building_crane</option>
+                    </select>
+                </div>
                 {droneState ? (
                     <div className="space-y-4">
-                        <div className="p-3 bg-white rounded border border-slate-200"><p className="text-[10px] uppercase font-bold text-slate-400">Trang thai</p><p className="font-mono text-blue-600 font-bold">{droneState.status}</p></div>
+                        <div className="p-3 bg-white rounded border border-slate-200"><p className="text-[10px] uppercase font-bold text-slate-400">Trang thai</p><p className={`font-mono font-bold ${droneState.status === 'failed' || droneState.status === 'emergency_landing' ? 'text-red-600' : droneState.status === 'charging' ? 'text-amber-600' : droneState.status === 'success' ? 'text-emerald-600' : 'text-blue-600'}`}>{droneState.status}</p></div>
                         <div className="p-3 bg-white rounded border border-slate-200">
                             <p className="text-[10px] uppercase font-bold text-slate-400">Telemetry</p>
                             <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 font-mono text-xs font-bold text-slate-700">
@@ -359,12 +418,22 @@ export default function MapDashboard() {
                     <Polyline positions={pathHistory} pathOptions={{ color: '#3b82f6', weight: 3, opacity: 0.7 }} />
 
                     {sampledZones.map((pos, idx) => <CircleMarker key={`shadow-${idx}`} center={pos} radius={2} pathOptions={{ color: '#22c55e', fillColor: '#22c55e', fillOpacity: 0.5 }} />)}
-                    {dynamicObstacles.map((pos, idx) => <Circle key={`dyn-obs-${idx}`} center={pos} radius={2} pathOptions={{ color: '#f97316', fillColor: '#f97316', fillOpacity: 0.5 }} />)}
+                    {dynamicObstacles.map((obstacle, idx) => {
+                        const pos = Array.isArray(obstacle) ? obstacle : obstacle.pos;
+                        const radius = Array.isArray(obstacle) ? 2 : obstacle.radius;
+                        const height = Array.isArray(obstacle) ? undefined : obstacle.height;
+                        const obstacleType = Array.isArray(obstacle) ? 'unknown' : obstacle.obstacleType;
+                        return (
+                            <Circle key={`dyn-obs-${idx}`} center={pos} radius={radius} pathOptions={{ color: '#f97316', fillColor: '#f97316', fillOpacity: 0.35 }}>
+                                <Tooltip>{height !== undefined ? `${obstacleType} / h ${height}m / r ${radius}m` : 'obstacle'}</Tooltip>
+                            </Circle>
+                        );
+                    })}
 
                     {droneState?.pos && (
                         <>
-                            <Circle center={droneState.pos} radius={30} pathOptions={{ color: '#60a5fa', fillColor: '#93c5fd', fillOpacity: 0.15, weight: 1, dashArray: '4,4' }} />
-                            <CircleMarker center={droneState.pos} radius={8} pathOptions={{ color: '#2563eb', fillColor: '#2563eb', fillOpacity: 1, weight: 2 }}><Tooltip permanent direction="bottom" className="building-label">UAV</Tooltip></CircleMarker>
+                            <Circle center={droneState.pos} radius={30} pathOptions={{ color: droneHaloColor, fillColor: droneHaloColor, fillOpacity: 0.15, weight: 1, dashArray: '4,4' }} />
+                            <CircleMarker center={droneState.pos} radius={8} pathOptions={{ color: droneColor, fillColor: droneColor, fillOpacity: 1, weight: 2 }}><Tooltip permanent direction="bottom" className="building-label">UAV</Tooltip></CircleMarker>
                         </>
                     )}
                 </MapContainer>

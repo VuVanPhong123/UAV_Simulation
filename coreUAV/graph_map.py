@@ -29,13 +29,28 @@ class WaypointGraph:
                 return True
         return False
     
-    def add_dynamic_obstacle(self, pos_utm):
-        self.dynamic_obstacles.append(pos_utm)
+    def add_dynamic_obstacle(self, pos_utm, radius=8.0, height=25.0):
+        self.dynamic_obstacles.append({
+            'pos': pos_utm,
+            'radius': float(radius),
+            'height': float(height)
+        })
 
-    def is_in_dynamic_obs(self, node):
+    def is_in_dynamic_obs(self, node, altitude=None):
         x, y = self.nodes.get(node, (0, 0))
-        for ox, oy in self.dynamic_obstacles:
-            if np.hypot(x - ox, y - oy) <= (3.0 + getattr(self, 'safety_margin', 5.0)):
+        for obs in self.dynamic_obstacles:
+            if isinstance(obs, dict):
+                ox, oy = obs['pos']
+                radius = float(obs.get('radius', 8.0))
+                height = float(obs.get('height', 25.0))
+            else:
+                ox, oy = obs
+                radius = 3.0
+                height = float('inf')
+
+            if np.hypot(x - ox, y - oy) <= (radius + getattr(self, 'safety_margin', 5.0)):
+                if altitude is not None and altitude > height + getattr(self, 'safety_margin', 5.0):
+                    continue
                 return True
         return False
     
@@ -172,7 +187,7 @@ class WaypointGraph:
                 nxt = (current[0] + dx, current[1] + dy)
                 if not (0 <= nxt[0] < self.cols and 0 <= nxt[1] < self.rows): continue
 
-                if getattr(self, 'is_in_dynamic_obs', lambda x: False)(nxt):
+                if getattr(self, 'is_in_dynamic_obs', lambda x, altitude=None: False)(nxt, current_altitude):
                     continue
                 if self.is_in_nfz(nxt):
                     continue
@@ -223,7 +238,7 @@ class WaypointGraph:
                     return False
                 if self.is_in_nfz((x0, y0)):
                     return False
-                if self.is_in_dynamic_obs((x0, y0)):
+                if self.is_in_dynamic_obs((x0, y0), altitude):
                     return False
             if x0 == x1 and y0 == y1:
                 break
@@ -256,6 +271,22 @@ class WaypointGraph:
             
         print(f"   [Làm mịn] Rút gọn từ {len(raw_path)} node xuống còn {len(smoothed)} node.")
         return smoothed
+
+    def estimate_path_cost(self, path, altitude, wind_dir=0.0, wind_speed=0.0):
+        if not path:
+            return float('inf')
+        if len(path) < 2:
+            return 0.0
+
+        total = 0.0
+        for current, nxt in zip(path, path[1:]):
+            dx = nxt[0] - current[0]
+            dy = nxt[1] - current[1]
+            step_dist = np.hypot(dx, dy)
+            energy_multiplier = self.get_energy_multiplier(current, nxt, wind_dir, wind_speed, altitude)
+            total += step_dist * self.resolution * energy_multiplier
+        return total
+
     def get_wind_shadow_nodes(self, wind_dir_deg, altitude, shadow_length=5):
         shadow_nodes = []
         for i in range(self.cols):

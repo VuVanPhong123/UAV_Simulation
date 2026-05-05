@@ -170,8 +170,11 @@ def main():
             }
         }))
 
-    def sim_matches(data):
-        return data.get("simId") == sim_id
+    def drain_env_events():
+        if env is None:
+            return
+        for evt in env.drain_events():
+            send_event(evt["level"], evt["code"], evt["message"])
 
     def reject_wrong_sim(data):
         if data.get("simId") != sim_id:
@@ -217,14 +220,24 @@ def main():
                 send_wind_shadow_zones()
                 send_planned_path()
                 send_event(EventLevel.INFO.value, EventCode.PATH_PLANNED.value, "Initial path planned.")
+                drain_env_events()
                 is_running = True
                 print(f"Bat dau simulation {sim_id} cho {frontend_id}")
 
             elif msg_type == 'add_obstacle':
                 if not is_assigned or reject_wrong_sim(data):
                     continue
-                env.add_obstacle(data['pos'])
+                payload = data.get('payload') or {}
+                pos = payload.get('pos') or data.get('pos')
+                radius = payload.get('radius', 8.0)
+                height = payload.get('height', 25.0)
+                obstacle_type = payload.get('obstacleType', 'unknown')
+                if not pos:
+                    send_event(EventLevel.ERROR.value, EventCode.WORKER_ERROR.value, "Obstacle message missing position.")
+                    continue
+                env.add_obstacle(pos, radius=radius, height=height, obstacle_type=obstacle_type)
                 send_event(EventLevel.WARNING.value, EventCode.OBSTACLE_ADDED.value, "Obstacle added by user.")
+                drain_env_events()
 
             elif msg_type == 'weather_update':
                 if not is_assigned or reject_wrong_sim(data):
@@ -251,7 +264,7 @@ def main():
 
                 raw_path = env.graph.a_star(
                     env.drone.node,
-                    env.graph.goal,
+                    env.current_target_node,
                     current_altitude=env.drone.altitude,
                     wind_dir=env.wind_dir,
                     wind_speed=env.wind_speed
@@ -264,9 +277,11 @@ def main():
                 if env.path:
                     send_event(EventLevel.INFO.value, EventCode.PATH_REPLANNED.value, "Path replanned after weather update.")
                 else:
+                    env.drone.status = DroneStatus.EMERGENCY_LANDING.value
                     send_event(EventLevel.ERROR.value, EventCode.DELIVERY_FAILED.value, "Delivery failed.")
                 is_running = was_running
                 last_path_id = id(env.path)
+                drain_env_events()
 
             elif msg_type == 'command':
                 if not is_assigned or reject_wrong_sim(data):
@@ -286,6 +301,7 @@ def main():
                     send_wind_shadow_zones()
                     send_planned_path()
                     send_event(EventLevel.INFO.value, EventCode.PATH_PLANNED.value, "Simulation reset and path planned.")
+                    drain_env_events()
                     last_path_id = id(env.path)
                     is_running = True
                 elif cmd == 'stop':
@@ -309,6 +325,7 @@ def main():
             try:
                 obs, reward, terminated, truncated, info = env.step()
                 step += 1
+                drain_env_events()
                 telemetry_counter += 1
                 if telemetry_counter >= TELEMETRY_EVERY_N_STEPS:
                     send_telemetry(terminated or truncated)
@@ -326,12 +343,11 @@ def main():
                     if env.drone.status == DroneStatus.SUCCESS.value:
                         finished_status = "success"
                         send_telemetry(True)
-                        send_event(EventLevel.SUCCESS.value, EventCode.DELIVERY_SUCCESS.value, "Delivery completed successfully.")
                     else:
                         finished_status = "truncated" if truncated else "failed"
-                        env.drone.status = DroneStatus.FAILED.value
+                        if env.drone.status != DroneStatus.EMERGENCY_LANDING.value:
+                            env.drone.status = DroneStatus.FAILED.value
                         send_telemetry(True)
-                        send_event(EventLevel.ERROR.value, EventCode.DELIVERY_FAILED.value, "Delivery failed.")
 
                     send_simulation_finished(finished_status)
                     send_worker_status("idle")
