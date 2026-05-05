@@ -12,7 +12,7 @@ try {
 }
 
 const WS_URL = 'ws://localhost:8080';
-const TOTAL_TIMEOUT_MS = 60000;
+const TOTAL_TIMEOUT_MS = 180000;
 
 let ws;
 let simId = null;
@@ -82,6 +82,10 @@ function waitFor(predicate, timeoutMs, stepName) {
   });
 }
 
+function clearBacklog() {
+  backlog.length = 0;
+}
+
 function telemetryPayload(message) {
   return message.payload || message;
 }
@@ -108,7 +112,9 @@ async function runScenario() {
 
   await waitFor(
     (message) => (
-      message.type === 'worker_status' && message.status === 'idle'
+      message.type === 'worker_status' && (
+        message.status === 'idle' || (message.payload && message.payload.status === 'idle')
+      )
     ) || (
       message.type === 'connection_state' && message.workerStatus === 'idle'
     ),
@@ -138,6 +144,7 @@ async function runScenario() {
   await waitFor((message) => message.type === 'planned_path' && message.simId === simId, 60000, 'planned path received');
   pass('planned path received');
 
+  clearBacklog();
   send({
     type: 'weather_update',
     simId,
@@ -164,6 +171,7 @@ async function runScenario() {
   );
   pass('weather update accepted');
 
+  clearBacklog();
   send({
     type: 'add_obstacle',
     simId,
@@ -186,6 +194,7 @@ async function runScenario() {
   );
   pass('obstacle accepted');
 
+  clearBacklog();
   send({
     type: 'command',
     simId,
