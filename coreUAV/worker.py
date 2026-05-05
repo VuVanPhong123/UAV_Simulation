@@ -342,7 +342,29 @@ def main():
                 if cmd == 'start' and not is_running:
                     print("Da nhan lenh BAT DAU!")
                     is_running = True
+                    if env is not None and env.drone.status == DroneStatus.PAUSED.value:
+                        env.drone.status = DroneStatus.FLYING.value
                     send_event(EventLevel.INFO.value, EventCode.PATH_PLANNED.value, "Simulation started.")
+                elif cmd == 'pause':
+                    print("Da nhan lenh PAUSE!")
+                    if env is not None and is_running:
+                        is_running = False
+                        if env.drone.status not in (
+                            DroneStatus.SUCCESS.value,
+                            DroneStatus.FAILED.value,
+                            DroneStatus.EMERGENCY_LANDING.value
+                        ):
+                            env.drone.status = DroneStatus.PAUSED.value
+                        send_event(EventLevel.INFO.value, EventCode.SIMULATION_PAUSED.value, "Simulation paused.")
+                        send_telemetry()
+                elif cmd == 'resume':
+                    print("Da nhan lenh RESUME!")
+                    if env is not None:
+                        if env.drone.status == DroneStatus.PAUSED.value:
+                            env.drone.status = DroneStatus.FLYING.value
+                        is_running = True
+                        send_event(EventLevel.INFO.value, EventCode.SIMULATION_RESUMED.value, "Simulation resumed.")
+                        send_telemetry()
                 elif cmd == 'reset':
                     print("Da nhan lenh RESET!")
                     is_running = False
@@ -359,6 +381,11 @@ def main():
                 elif cmd == 'stop':
                     print("Da nhan lenh STOP!")
                     is_running = False
+                    if env is not None:
+                        env.drone.status = DroneStatus.FAILED.value
+                        send_telemetry(True)
+                    send_event(EventLevel.INFO.value, EventCode.SIMULATION_STOPPED.value, "Simulation stopped by operator.")
+                    send_simulation_finished("stopped")
                     is_assigned = False
                     send_worker_status("idle")
                     sim_id = None
