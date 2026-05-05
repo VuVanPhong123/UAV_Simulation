@@ -27,6 +27,10 @@ type TelemetryState = {
     temperature?: number;
     status?: string;
     step?: number;
+    windDir?: number;
+    windSpeed?: number;
+    ambientTemp?: number;
+    isRaining?: boolean;
 };
 
 type MapConfig = {
@@ -84,7 +88,7 @@ export default function MapDashboard() {
 
     const [dynamicObstacles, setDynamicObstacles] = useState<DynamicObstacle[]>([]);
     const [windShadowZones, setWindShadowZones] = useState<[number, number][]>([]);
-    const [weather, setWeather] = useState({ wind_dir: 0, wind_speed: 0, ambient_temp: 25 });
+    const [weather, setWeather] = useState({ wind_dir: 0, wind_speed: 0, ambient_temp: 25, is_raining: false });
     const [obstacleConfig, setObstacleConfig] = useState({
         radius: 8,
         height: 25,
@@ -243,7 +247,7 @@ export default function MapDashboard() {
         }
     };
 
-    const handleWeatherChange = (key: keyof typeof weather, value: number) => {
+    const handleWeatherChange = (key: keyof typeof weather, value: number | boolean) => {
         setWeather(prev => ({ ...prev, [key]: value }));
     };
 
@@ -256,7 +260,17 @@ export default function MapDashboard() {
             addEventLog('warning', 'NO_ACTIVE_SIMULATION', 'Start a simulation before changing weather.');
             return;
         }
-        wsRef.current?.send(JSON.stringify({ type: 'weather_update', simId: activeSimId, ...weather }));
+        wsRef.current?.send(JSON.stringify({
+            type: 'weather_update',
+            simId: activeSimId,
+            ...weather,
+            payload: {
+                wind_dir: weather.wind_dir,
+                wind_speed: weather.wind_speed,
+                ambient_temp: weather.ambient_temp,
+                is_raining: weather.is_raining
+            }
+        }));
     };
 
     const defaultCenter: [number, number] = [21.0285, 105.8542];
@@ -343,9 +357,14 @@ export default function MapDashboard() {
                 </div>
                 <div className="flex flex-col gap-3 p-4 bg-white rounded border border-slate-200 mt-4">
                     <h3 className="text-sm font-bold text-slate-700 border-b pb-2">Thoi tiet & Moi truong</h3>
+                    <p className="text-[11px] font-medium text-slate-500">Huong gio = huong gio thoi toi.</p>
                     <div className="flex flex-col gap-1"><label className="text-[11px] font-semibold text-slate-600">Huong gio: {weather.wind_dir}°</label><input type="range" min="0" max="360" value={weather.wind_dir} onChange={e => handleWeatherChange('wind_dir', parseInt(e.target.value))} className="w-full" /></div>
                     <div className="flex flex-col gap-1"><label className="text-[11px] font-semibold text-slate-600">Toc do gio: {weather.wind_speed} m/s</label><input type="range" min="0" max="25" value={weather.wind_speed} onChange={e => handleWeatherChange('wind_speed', parseInt(e.target.value))} className="w-full" /></div>
                     <div className="flex flex-col gap-1"><label className="text-[11px] font-semibold text-slate-600">Nhiet do: {weather.ambient_temp}°C</label><input type="range" min="-10" max="50" value={weather.ambient_temp} onChange={e => handleWeatherChange('ambient_temp', parseInt(e.target.value))} className="w-full" /></div>
+                    <label className="flex items-center gap-2 text-xs font-semibold text-slate-700">
+                        <input type="checkbox" checked={weather.is_raining} onChange={e => handleWeatherChange('is_raining', e.target.checked)} />
+                        Rain
+                    </label>
                     <button onClick={applyWeatherUpdate} className="mt-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 rounded shadow-sm text-xs transition-colors">AP DUNG THOI TIET</button>
                 </div>
                 <div className="flex flex-col gap-3 p-4 bg-white rounded border border-slate-200">
@@ -377,6 +396,10 @@ export default function MapDashboard() {
                                 <span>Toc do</span><span>{droneState.speed ?? '--'}m/s</span>
                                 <span>Heading</span><span>{droneState.heading !== undefined ? Number(droneState.heading).toFixed(1) : '--'}°</span>
                                 <span>Nhiet do</span><span>{droneState.temperature !== undefined ? Number(droneState.temperature).toFixed(1) : '--'}°C</span>
+                                <span>Wind</span><span>{droneState.windSpeed !== undefined ? `${Number(droneState.windSpeed).toFixed(1)}m/s` : '--'}</span>
+                                <span>Wind to</span><span>{droneState.windDir !== undefined ? `${Number(droneState.windDir).toFixed(0)}°` : '--'}</span>
+                                <span>Ambient</span><span>{droneState.ambientTemp !== undefined ? `${Number(droneState.ambientTemp).toFixed(1)}°C` : '--'}</span>
+                                <span>Rain</span><span>{droneState.isRaining ? 'on' : 'off'}</span>
                                 <span>Step</span><span>{droneState.step ?? '--'}</span>
                             </div>
                         </div>

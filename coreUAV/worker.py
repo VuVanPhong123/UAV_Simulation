@@ -6,6 +6,7 @@ from websocket import create_connection
 from pyproj import Transformer
 from environment import DeliveryEnv
 from statuses import DroneStatus, EventCode, EventLevel
+from energy_model import rain_factor
 
 WS_URL = "ws://localhost:8080"
 DRONE_ID = "drone_1"
@@ -42,6 +43,13 @@ def main():
 
     def current_sim_id():
         return sim_id
+
+    def parse_bool(value):
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in ("1", "true", "yes", "on")
+        return bool(value)
 
     def send_event(level, code, message):
         ws.send(json.dumps({
@@ -87,12 +95,16 @@ def main():
             "pos": [lat, lon],
             "batteryPercent": float(env.drone.battery),
             "altitude": float(env.drone.altitude),
-            "speed": float(env.drone.speed),
+            "speed": float(env.drone.speed * rain_factor(env.is_raining)["speed_factor"]),
             "heading": float(env.drone.heading),
             "temperature": float(env.drone.temperature),
             "status": env.drone.status,
             "mode": "delivery",
             "energyConsumed": float(env.drone.max_battery - env.drone.battery),
+            "windDir": float(env.wind_dir),
+            "windSpeed": float(env.wind_speed),
+            "ambientTemp": float(env.ambient_temp),
+            "isRaining": bool(env.is_raining),
             "step": step,
             "terminated": terminated
         }
@@ -111,6 +123,10 @@ def main():
             "heading": payload["heading"],
             "temperature": payload["temperature"],
             "status": payload["status"],
+            "windDir": payload["windDir"],
+            "windSpeed": payload["windSpeed"],
+            "ambientTemp": payload["ambientTemp"],
+            "isRaining": payload["isRaining"],
             "terminated": payload["terminated"]
         }))
 
@@ -242,13 +258,24 @@ def main():
             elif msg_type == 'weather_update':
                 if not is_assigned or reject_wrong_sim(data):
                     continue
+                payload = data.get('payload') or {}
+                wind_dir = payload.get('wind_dir', data.get('wind_dir', env.wind_dir))
+                wind_speed = payload.get('wind_speed', data.get('wind_speed', env.wind_speed))
+                ambient_temp = payload.get('ambient_temp', data.get('ambient_temp', env.ambient_temp))
+                rain_value = payload.get('is_raining', payload.get('rain', data.get('is_raining', data.get('rain', False))))
+                is_raining = parse_bool(rain_value)
                 was_running = is_running
                 is_running = False
-                send_event(EventLevel.INFO.value, EventCode.WEATHER_CHANGED.value, "Weather changed. Replanning path.")
                 env.update_weather(
-                    wind_dir=float(data['wind_dir']),
-                    wind_speed=float(data['wind_speed']),
-                    ambient_temp=float(data['ambient_temp'])
+                    wind_dir=float(wind_dir),
+                    wind_speed=float(wind_speed),
+                    ambient_temp=float(ambient_temp),
+                    is_raining=is_raining
+                )
+                send_event(
+                    EventLevel.INFO.value,
+                    EventCode.WEATHER_CHANGED.value,
+                    f"Weather changed: wind_to={env.wind_dir} deg, speed={env.wind_speed} m/s, temp={env.ambient_temp} C, rain={'on' if env.is_raining else 'off'}. Replanning path."
                 )
                 print("   [Worker] Tinh lai duong theo gio moi...")
 
@@ -267,7 +294,9 @@ def main():
                     env.current_target_node,
                     current_altitude=env.drone.altitude,
                     wind_dir=env.wind_dir,
-                    wind_speed=env.wind_speed
+                    wind_speed=env.wind_speed,
+                    ambient_temp=env.ambient_temp,
+                    is_raining=env.is_raining
                 )
                 env.path = env.graph.smooth_path(raw_path, env.drone.altitude)
                 env.path_index = 0

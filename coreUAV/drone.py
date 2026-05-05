@@ -1,5 +1,5 @@
-import numpy as np
 from statuses import DroneStatus
+from energy_model import battery_drain_rate
 
 class Drone:
     def __init__(self, config):
@@ -25,23 +25,22 @@ class Drone:
         self.temp_sensitivity = 0.002
         self.status = DroneStatus.IDLE.value
 
-    def consume_battery(self, dt, climbing=False, wind_speed=0.0, wind_dir=0.0, heading=0.0, is_shielded=False):
-        rate = self.discharge_base
-        if climbing:
-            rate = self.discharge_climb
-        rate += (self.payload_weight * self.payload_penalty)
-
-        if wind_speed > 0:
-            angle = np.radians(heading - wind_dir)
-            headwind_component = wind_speed * np.cos(angle)
-            crosswind_component = wind_speed * np.sin(angle)
-            effective_wind_speed = wind_speed * 0.2 if is_shielded else wind_speed
-            wind_penalty = 0.05 * abs(headwind_component) + 0.02 * abs(crosswind_component)
-            rate *= (1 + wind_penalty)
-
-        temp_penalty = 1.0 + self.temp_sensitivity * (self.temperature - self.optimal_temp)**2
-        actual_rate = rate * temp_penalty
-
+    def consume_battery(self, dt, climbing=False, wind_speed=0.0, wind_dir=0.0, heading=0.0, is_shielded=False, is_raining=False):
+        actual_rate = battery_drain_rate(
+            self.discharge_base,
+            self.discharge_climb,
+            climbing=climbing,
+            payload_weight=self.payload_weight,
+            payload_penalty=self.payload_penalty,
+            move_heading_deg=heading,
+            wind_to_deg=wind_dir,
+            wind_speed=wind_speed,
+            is_shielded=is_shielded,
+            temp_c=self.temperature,
+            optimal_temp=self.optimal_temp,
+            temp_sensitivity=self.temp_sensitivity,
+            is_raining=is_raining
+        )
         self.battery -= actual_rate * dt
         if self.battery < 0:
             self.battery = 0

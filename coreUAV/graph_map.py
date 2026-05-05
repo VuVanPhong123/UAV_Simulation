@@ -3,6 +3,7 @@ import heapq
 import geopandas as gpd
 from pyproj import Transformer
 from shapely.geometry import Point
+from energy_model import rain_factor, temperature_factor, wind_factor
 
 class WaypointGraph:
     def __init__(self, config):
@@ -135,7 +136,7 @@ class WaypointGraph:
                 
         return False
 
-    def get_energy_multiplier(self, current, nxt, wind_dir_deg, wind_speed, altitude):
+    def _legacy_energy_multiplier(self, current, nxt, wind_dir_deg, wind_speed, altitude):
         """
         Tính toán hệ số tiêu hao năng lượng dựa trên Tích vô hướng (Dot Product).
         """
@@ -166,7 +167,29 @@ class WaypointGraph:
         
         return max(0.1, energy_multiplier)
 
-    def a_star(self, start, goal, current_altitude=20.0, wind_dir=0.0, wind_speed=0.0):
+    def get_energy_multiplier(
+        self,
+        current,
+        nxt,
+        wind_dir_deg,
+        wind_speed,
+        altitude,
+        ambient_temp=25.0,
+        is_raining=False
+    ):
+        move_x = nxt[0] - current[0]
+        move_y = nxt[1] - current[1]
+        if move_x == 0 and move_y == 0:
+            return 1.0
+
+        move_heading_deg = np.degrees(np.arctan2(move_y, move_x))
+        is_shielded = self.check_wind_shadow(current, wind_dir_deg, altitude)
+        wf = wind_factor(move_heading_deg, wind_dir_deg, wind_speed, is_shielded)
+        tf = temperature_factor(ambient_temp)
+        rf = rain_factor(is_raining)["energy_factor"]
+        return wf * tf * rf
+
+    def a_star(self, start, goal, current_altitude=20.0, wind_dir=0.0, wind_speed=0.0, ambient_temp=25.0, is_raining=False):
         print(f"   [A*] Tìm đường Energy-Aware từ {start} đến {goal} | Gió {wind_speed}m/s hướng {wind_dir}°")
         frontier = []
         heapq.heappush(frontier, (0, start))
@@ -194,7 +217,15 @@ class WaypointGraph:
                 if self.heights[nxt] >= current_altitude and nxt != goal and nxt not in self.charging_stations: 
                     continue 
                     
-                energy_multiplier = self.get_energy_multiplier(current, nxt, wind_dir, wind_speed, current_altitude)
+                energy_multiplier = self.get_energy_multiplier(
+                    current,
+                    nxt,
+                    wind_dir,
+                    wind_speed,
+                    current_altitude,
+                    ambient_temp,
+                    is_raining
+                )
                 
                 step_energy_cost = (step_dist * self.resolution) * energy_multiplier
                 new_cost = cost_so_far[current] + step_energy_cost
@@ -272,7 +303,7 @@ class WaypointGraph:
         print(f"   [Làm mịn] Rút gọn từ {len(raw_path)} node xuống còn {len(smoothed)} node.")
         return smoothed
 
-    def estimate_path_cost(self, path, altitude, wind_dir=0.0, wind_speed=0.0):
+    def estimate_path_cost(self, path, altitude, wind_dir=0.0, wind_speed=0.0, ambient_temp=25.0, is_raining=False):
         if not path:
             return float('inf')
         if len(path) < 2:
@@ -283,7 +314,15 @@ class WaypointGraph:
             dx = nxt[0] - current[0]
             dy = nxt[1] - current[1]
             step_dist = np.hypot(dx, dy)
-            energy_multiplier = self.get_energy_multiplier(current, nxt, wind_dir, wind_speed, altitude)
+            energy_multiplier = self.get_energy_multiplier(
+                current,
+                nxt,
+                wind_dir,
+                wind_speed,
+                altitude,
+                ambient_temp,
+                is_raining
+            )
             total += step_dist * self.resolution * energy_multiplier
         return total
 

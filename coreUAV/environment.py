@@ -3,6 +3,7 @@ import numpy as np
 from graph_map import WaypointGraph
 from drone import Drone
 from statuses import DroneStatus, EventCode, EventLevel
+from energy_model import rain_factor
 
 
 class DeliveryEnv(gym.Env):
@@ -31,6 +32,7 @@ class DeliveryEnv(gym.Env):
         self.wind_dir = 0.0
         self.wind_speed = 0.0
         self.ambient_temp = 25.0
+        self.is_raining = False
 
     def queue_event(self, level, code, message):
         self.pending_events.append({
@@ -44,11 +46,12 @@ class DeliveryEnv(gym.Env):
         self.pending_events = []
         return events
 
-    def update_weather(self, wind_dir, wind_speed, ambient_temp):
+    def update_weather(self, wind_dir, wind_speed, ambient_temp, is_raining=False):
         self.wind_dir = wind_dir
         self.wind_speed = wind_speed
         self.ambient_temp = ambient_temp
-        print(f"   [Env] Cap nhat thoi tiet: Gio {wind_speed}m/s, Huong {wind_dir} deg, Temp {ambient_temp}C")
+        self.is_raining = bool(is_raining)
+        print(f"   [Env] Cap nhat thoi tiet: Gio {wind_speed}m/s, Huong {wind_dir} deg, Temp {ambient_temp}C, Rain {self.is_raining}")
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -80,7 +83,9 @@ class DeliveryEnv(gym.Env):
             self.current_target_node,
             current_altitude=self.drone.altitude,
             wind_dir=self.wind_dir,
-            wind_speed=self.wind_speed
+            wind_speed=self.wind_speed,
+            ambient_temp=self.ambient_temp,
+            is_raining=self.is_raining
         )
         self.path = self.graph.smooth_path(raw_path, self.drone.altitude)
         if self.path:
@@ -108,14 +113,18 @@ class DeliveryEnv(gym.Env):
             "battery": self.drone.battery,
             "batteryPercent": self.drone.battery,
             "altitude": self.drone.altitude,
-            "speed": self.drone.speed,
+            "speed": self.drone.speed * rain_factor(self.is_raining)["speed_factor"],
             "heading": self.drone.heading,
             "temperature": self.drone.temperature,
             "status": self.drone.status,
             "mode": "delivery",
             "energyConsumed": self.drone.max_battery - self.drone.battery,
             "node": self.drone.node,
-            "step": self.step_count
+            "step": self.step_count,
+            "windDir": self.wind_dir,
+            "windSpeed": self.wind_speed,
+            "ambientTemp": self.ambient_temp,
+            "isRaining": self.is_raining
         }
 
     def _current_grid_node(self):
@@ -136,7 +145,9 @@ class DeliveryEnv(gym.Env):
                 station_node,
                 current_altitude=self.drone.altitude,
                 wind_dir=self.wind_dir,
-                wind_speed=self.wind_speed
+                wind_speed=self.wind_speed,
+                ambient_temp=self.ambient_temp,
+                is_raining=self.is_raining
             )
             if not path:
                 continue
@@ -145,7 +156,9 @@ class DeliveryEnv(gym.Env):
                 path,
                 self.drone.altitude,
                 self.wind_dir,
-                self.wind_speed
+                self.wind_speed,
+                self.ambient_temp,
+                self.is_raining
             )
             if cost < best_cost:
                 best_cost = cost
@@ -162,7 +175,8 @@ class DeliveryEnv(gym.Env):
 
             dx = self.drone.pos[0] - obs['pos'][0]
             dy = self.drone.pos[1] - obs['pos'][1]
-            if np.hypot(dx, dy) > self.sensor_range + obs['radius']:
+            effective_sensor_range = self.sensor_range * rain_factor(self.is_raining)["sensor_factor"]
+            if np.hypot(dx, dy) > effective_sensor_range + obs['radius']:
                 continue
 
             obs['detected'] = True
@@ -202,7 +216,9 @@ class DeliveryEnv(gym.Env):
                     self.current_target_node,
                     current_altitude=self.drone.altitude,
                     wind_dir=self.wind_dir,
-                    wind_speed=self.wind_speed
+                    wind_speed=self.wind_speed,
+                    ambient_temp=self.ambient_temp,
+                    is_raining=self.is_raining
                 )
 
                 if raw_path:
@@ -218,7 +234,9 @@ class DeliveryEnv(gym.Env):
                         self.current_target_node,
                         current_altitude=self.drone.altitude,
                         wind_dir=self.wind_dir,
-                        wind_speed=self.wind_speed
+                        wind_speed=self.wind_speed,
+                        ambient_temp=self.ambient_temp,
+                        is_raining=self.is_raining
                     )
                     if raw_path:
                         self.path = self.graph.smooth_path(raw_path, self.drone.altitude)
@@ -264,7 +282,9 @@ class DeliveryEnv(gym.Env):
                     self.current_target_node,
                     current_altitude=self.drone.altitude,
                     wind_dir=self.wind_dir,
-                    wind_speed=self.wind_speed
+                    wind_speed=self.wind_speed,
+                    ambient_temp=self.ambient_temp,
+                    is_raining=self.is_raining
                 )
                 self.path = self.graph.smooth_path(raw_path, self.drone.altitude)
                 self.path_index = 0
@@ -312,7 +332,8 @@ class DeliveryEnv(gym.Env):
 
             if dist > 0:
                 self.drone.heading = np.degrees(np.arctan2(dy, dx))
-                move = min(self.drone.speed * dt, dist)
+                effective_speed = self.drone.speed * rain_factor(self.is_raining)["speed_factor"]
+                move = min(effective_speed * dt, dist)
                 ratio = move / dist
                 self.drone.pos = (
                     self.drone.pos[0] + dx * ratio,
@@ -352,7 +373,8 @@ class DeliveryEnv(gym.Env):
                 wind_speed=self.wind_speed,
                 wind_dir=self.wind_dir,
                 heading=self.drone.heading,
-                is_shielded=is_shielded
+                is_shielded=is_shielded,
+                is_raining=self.is_raining
             )
 
         if self.drone.battery <= 0:
