@@ -26,7 +26,7 @@ class DroneAgent:
     start_node: tuple
     goal_node: tuple
     current_target_node: tuple
-    current_target_type: str = "goal"
+    current_target_type: str = "idle"
     path: list = field(default_factory=list)
     path_index: int = 0
     charging_mode: bool = False
@@ -47,8 +47,9 @@ class DroneAgent:
 
 
 class SimulationWorld:
-    def __init__(self, config, drone_count=1):
+    def __init__(self, config, drone_count=1, idle_on_start=True):
         self.config = config
+        self.idle_on_start = bool(idle_on_start)
         self.graph = WaypointGraph(config)
         self.time_step = config["simulation"]["time_step"]
         self.max_steps = config["simulation"]["max_steps"]
@@ -101,14 +102,15 @@ class SimulationWorld:
             drone.altitude = drone.normal_altitude
             drone.heading = 0.0
             drone.temperature = 30.0
-            drone.status = DroneStatus.PLANNING.value
+            drone.status = DroneStatus.IDLE.value if self.idle_on_start else DroneStatus.PLANNING.value
 
             agent = DroneAgent(
                 drone_id=drone_id,
                 drone=drone,
                 start_node=start_node,
                 goal_node=goal_node,
-                current_target_node=goal_node,
+                current_target_node=start_node if self.idle_on_start else goal_node,
+                current_target_type="idle" if self.idle_on_start else "goal",
                 current_target_altitude=drone.normal_altitude,
                 current_order_id=None,
                 current_mission_id=None,
@@ -117,7 +119,8 @@ class SimulationWorld:
                 return_target_type_after_charging=None,
             )
             self.agents[drone_id] = agent
-            self._replan_agent(agent, EventCode.PATH_PLANNED.value, "Initial path planned.")
+            if not self.idle_on_start:
+                self._replan_agent(agent, EventCode.PATH_PLANNED.value, "Initial path planned.")
 
     def _now_ms(self):
         return int(time.time() * 1000)
@@ -266,7 +269,7 @@ class SimulationWorld:
             if agent.drone.pos is not None:
                 agent.drone.node = self._current_grid_node(agent)
             raw_pickup_path = self._plan_path(agent.drone.node, order.pickup_node, agent.drone.altitude)
-            pickup_path = self.graph.smooth_path(raw_pickup_path, agent.drone.altitude)
+            pickup_path = self.graph.smooth_path(raw_pickup_path, agent.drone.altitude) if raw_pickup_path else []
 
             now = self._now_ms()
             mission_id = self._next_mission_id()
@@ -559,12 +562,20 @@ class SimulationWorld:
         )
 
     def _replan_agent(self, agent, event_code=None, event_message=None):
+        if agent.current_target_type == "idle":
+            agent.path = []
+            agent.path_index = 0
+            agent.current_target_node = agent.drone.node
+            agent.current_target_altitude = agent.drone.altitude
+            agent.drone.status = DroneStatus.IDLE.value
+            return True
+
         raw_path = self._plan_path(
             agent.drone.node,
             agent.current_target_node,
             agent.drone.altitude,
         )
-        agent.path = self.graph.smooth_path(raw_path, agent.drone.altitude)
+        agent.path = self.graph.smooth_path(raw_path, agent.drone.altitude) if raw_path else []
         agent.path_index = 0
         agent.current_target_altitude = self._next_target_altitude(agent)
         if agent.path:
@@ -613,9 +624,11 @@ class SimulationWorld:
         agent.available = True
         agent.current_order_id = None
         agent.current_mission_id = None
+        agent.current_target_node = agent.drone.node
         agent.current_target_type = "idle"
         agent.path = []
         agent.path_index = 0
+        agent.drone.status = DroneStatus.IDLE.value
         agent.return_target_node_after_charging = None
         agent.return_target_type_after_charging = None
 
@@ -645,7 +658,7 @@ class SimulationWorld:
         agent.current_target_type = "dropoff"
         agent.drone.node = order.pickup_node
         raw_path = self._plan_path(agent.drone.node, order.dropoff_node, agent.drone.altitude)
-        dropoff_path = self.graph.smooth_path(raw_path, agent.drone.altitude)
+        dropoff_path = self.graph.smooth_path(raw_path, agent.drone.altitude) if raw_path else []
         mission.dropoff_path = dropoff_path
 
         if not dropoff_path:
@@ -1001,7 +1014,7 @@ class SimulationWorld:
             if agent.drone.status == DroneStatus.FLYING.value:
                 self._move_agent(agent, dt)
 
-        if self.step_count >= self.max_steps:
+        if self.orders and self.step_count >= self.max_steps:
             for agent in self.get_agents():
                 if agent.drone.status not in TERMINAL_STATUSES:
                     agent.drone.status = DroneStatus.FAILED.value
@@ -1011,13 +1024,17 @@ class SimulationWorld:
 
     def pause(self):
         for agent in self.get_agents():
-            if agent.drone.status not in TERMINAL_STATUSES and agent.drone.status != DroneStatus.CHARGING.value:
+            if (
+                agent.drone.status not in TERMINAL_STATUSES
+                and agent.drone.status != DroneStatus.CHARGING.value
+                and agent.current_target_type != "idle"
+            ):
                 agent.drone.status = DroneStatus.PAUSED.value
 
     def resume(self):
         for agent in self.get_agents():
             if agent.drone.status == DroneStatus.PAUSED.value:
-                agent.drone.status = DroneStatus.FLYING.value if agent.path else DroneStatus.PLANNING.value
+                agent.drone.status = DroneStatus.FLYING.value if agent.path else DroneStatus.IDLE.value
 
     def stop(self):
         for agent in self.get_agents():

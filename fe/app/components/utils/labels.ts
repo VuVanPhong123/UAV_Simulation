@@ -77,9 +77,18 @@ export function translateTargetType(targetType?: string | null) {
         dropoff: 'Điểm giao hàng',
         charging_station: 'Trạm sạc',
         goal: 'Điểm đích mô phỏng',
-        idle: 'Chờ nhiệm vụ'
+        idle: 'Chờ nhiệm vụ',
+        depot: 'Kho UAV'
     };
     return targetType ? labels[targetType] ?? targetType : '--';
+}
+
+export function translateSimulationMode(mode?: string | null) {
+    const labels: Record<string, string> = {
+        order_dispatch: 'Điều phối theo đơn hàng',
+        idle_on_start: 'Chờ đơn hàng'
+    };
+    return mode ? labels[mode] ?? mode : '--';
 }
 
 export function translateEventFilter(filter: string) {

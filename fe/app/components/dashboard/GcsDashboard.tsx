@@ -52,6 +52,15 @@ export default function GcsDashboard() {
     const [eventFilter, setEventFilter] = useState<EventFilter>('all');
     const [mapInteractionMode, setMapInteractionMode] = useState<MapInteractionMode>('none');
     const [importError, setImportError] = useState<string | null>(null);
+    const validDraftOrders = draftOrders.filter(order => (
+        order.orderId.trim()
+        && order.pickup
+        && order.dropoff
+        && Number.isFinite(order.payloadKg)
+        && order.payloadKg > 0
+    ));
+    const canStartWithOrders = droneCount >= 1 && draftOrders.length > 0 && validDraftOrders.length === draftOrders.length;
+    const startHint = 'Cần chọn số UAV và nhập ít nhất một đơn hàng trước khi bắt đầu mô phỏng.';
 
     useEffect(() => {
         fetch('/hanoi_buildings.geojson')
@@ -133,6 +142,16 @@ export default function GcsDashboard() {
             addLocalEvent('info', 'ORDER_BATCH_SUBMITTED', 'Đã gửi danh sách đơn hàng.');
         }
     }, [addLocalEvent, draftOrders, socket]);
+
+    const handleStartWithDraftOrders = useCallback(() => {
+        if (!canStartWithOrders) {
+            addLocalEvent('warning', 'START_NEEDS_ORDERS', startHint);
+            return;
+        }
+        socket.startSimulation({ droneCount, orderBatch: validDraftOrders });
+        setDraftOrders([]);
+        addLocalEvent('info', 'ORDER_FIRST_START_REQUESTED', `Bắt đầu mô phỏng với ${validDraftOrders.length} đơn hàng.`);
+    }, [addLocalEvent, canStartWithOrders, droneCount, socket, startHint, validDraftOrders]);
 
     const normalizePriority = useCallback((value: unknown): OrderPriority => {
         return ['low', 'normal', 'high', 'urgent'].includes(String(value)) ? String(value) as OrderPriority : 'normal';
@@ -321,7 +340,9 @@ export default function GcsDashboard() {
                     eventFilter={eventFilter}
                     mapInteractionMode={mapInteractionMode}
                     importError={importError}
-                    onStart={() => socket.startSimulation(droneCount)}
+                    canStartWithOrders={canStartWithOrders}
+                    startHint={startHint}
+                    onStart={handleStartWithDraftOrders}
                     onDroneCountChange={setDroneCount}
                     onSelectDrone={handleSelectDrone}
                     onPause={socket.pauseSimulation}
@@ -336,6 +357,7 @@ export default function GcsDashboard() {
                     onSelectMission={handleSelectMission}
                     onEventFilterChange={setEventFilter}
                     onAddDemoDraftOrders={handleAddDemoDraftOrders}
+                    onStartWithDraftOrders={handleStartWithDraftOrders}
                     onDraftChange={handleDraftChange}
                     onAddDraftOrder={handleAddDraftOrder}
                     onRemoveDraftOrder={handleRemoveDraftOrder}

@@ -9,6 +9,8 @@ type ControlPanelProps = {
     simulationStatus: SimulationStatus;
     activeSimId: string | null;
     droneCount: number;
+    canStartWithOrders?: boolean;
+    startHint?: string;
     onDroneCountChange: (value: number) => void;
     onStart: () => void;
     onPause: () => void;
@@ -50,6 +52,8 @@ export default function ControlPanel({
     simulationStatus,
     activeSimId,
     droneCount,
+    canStartWithOrders = true,
+    startHint,
     onDroneCountChange,
     onStart,
     onPause,
@@ -57,7 +61,7 @@ export default function ControlPanel({
     onStop,
     onReset
 }: ControlPanelProps) {
-    const startDisabled = serverStatus !== 'connected' || workerStatus !== 'idle' || simulationStatus === 'running';
+    const startDisabled = serverStatus !== 'connected' || workerStatus !== 'idle' || simulationStatus === 'running' || !canStartWithOrders;
     const pauseDisabled = simulationStatus !== 'running';
     const resumeDisabled = simulationStatus !== 'paused';
     const commandDisabled = !activeSimId;
@@ -86,6 +90,9 @@ export default function ControlPanel({
                     <Button variant="danger" disabled={commandDisabled} onClick={onStop}>Dừng</Button>
                 </div>
             </div>
+            {startDisabled && startHint && (
+                <p className="mt-2 text-xs font-semibold text-amber-700">{startHint}</p>
+            )}
         </section>
     );
 }

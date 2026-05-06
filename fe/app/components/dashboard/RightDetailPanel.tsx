@@ -60,6 +60,8 @@ type RightDetailPanelProps = {
     obstacleConfig: ObstacleConfig;
     layers: LayerToggles;
     droneCount: number;
+    canStartWithOrders: boolean;
+    startHint: string;
     batteryHistory: number[];
     temperatureHistory: number[];
     altitudeHistory: number[];
@@ -87,6 +89,7 @@ type RightDetailPanelProps = {
     onSelectMission: (missionId: string) => void;
     onEventFilterChange: (value: EventFilter) => void;
     onAddDemoDraftOrders: (orders: DraftOrder[]) => void;
+    onStartWithDraftOrders: () => void;
     onDraftChange: <K extends keyof DraftOrder>(key: K, value: DraftOrder[K]) => void;
     onAddDraftOrder: () => void;
     onRemoveDraftOrder: (orderId: string) => void;
@@ -200,6 +203,14 @@ function filterEvents(
 }
 
 export default function RightDetailPanel(props: RightDetailPanelProps) {
+    const droneRows = Object.values(props.drones);
+    const busyDrones = droneRows.filter(drone => (
+        Boolean(drone.currentOrderId || drone.currentMissionId)
+        || (['flying', 'rerouting'].includes(String(drone.status)) && ['pickup', 'dropoff', 'charging_station'].includes(String(drone.currentTargetType)))
+    )).length;
+    const idleDrones = droneRows.filter(drone => drone.status === 'idle' && !drone.currentOrderId && !drone.currentMissionId).length;
+    const chargingDrones = droneRows.filter(drone => drone.status === 'charging').length;
+    const failedDrones = droneRows.filter(drone => ['failed', 'emergency_landing'].includes(String(drone.status))).length;
     const selectedDrone = props.selectedDroneId ? props.drones[props.selectedDroneId] ?? props.droneState : props.droneState;
     const selectedOrder = props.selectedOrderId
         ? props.orders[props.selectedOrderId] ?? null
@@ -231,8 +242,10 @@ export default function RightDetailPanel(props: RightDetailPanelProps) {
                         <ControlPanel {...props} />
                         <SectionFrame title="Tổng quan khai thác">
                             <div className="grid grid-cols-2 gap-2">
-                                <SummaryCard label="Tổng UAV" value={Object.keys(props.drones).length} />
-                                <SummaryCard label="UAV đang giao" value={Object.values(props.drones).filter(drone => Boolean(drone.currentOrderId || drone.currentMissionId)).length} />
+                                <SummaryCard label="Tổng UAV" value={droneRows.length} />
+                                <SummaryCard label="UAV rảnh" value={idleDrones} />
+                                <SummaryCard label="UAV đang giao" value={busyDrones} />
+                                <SummaryCard label="UAV sạc/lỗi" value={`${chargingDrones}/${failedDrones}`} />
                                 <SummaryCard label="Đơn đang giao" value={Object.values(props.orders).filter(order => ['going_to_pickup', 'picked_up', 'delivering'].includes(order.status)).length} />
                                 <SummaryCard label="Đơn hoàn thành" value={Object.values(props.orders).filter(order => order.status === 'completed').length} />
                                 <SummaryCard label="Đơn thất bại" value={Object.values(props.orders).filter(order => order.status === 'failed').length} />
@@ -263,8 +276,11 @@ export default function RightDetailPanel(props: RightDetailPanelProps) {
                             mapInteractionMode={props.mapInteractionMode}
                             importError={props.importError}
                             droneCount={props.droneCount}
+                            canStartWithOrders={props.canStartWithOrders && props.serverStatus === 'connected' && props.workerStatus === 'idle' && props.simulationStatus !== 'running'}
+                            startHint={props.startHint}
                             onSelectOrder={props.onSelectOrder}
                             onAddDemoDraftOrders={props.onAddDemoDraftOrders}
+                            onStartWithDraftOrders={props.onStartWithDraftOrders}
                             onDraftChange={props.onDraftChange}
                             onAddDraftOrder={props.onAddDraftOrder}
                             onRemoveDraftOrder={props.onRemoveDraftOrder}

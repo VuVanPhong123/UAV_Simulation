@@ -42,8 +42,16 @@ export default function TopStatusBar({
     orders
 }: TopStatusBarProps) {
     const orderRows = Object.values(orders);
+    const droneRows = Object.values(drones);
     const activeOrders = orderRows.filter(order => !['completed', 'failed', 'canceled'].includes(order.status)).length;
     const completedOrders = orderRows.filter(order => order.status === 'completed').length;
+    const busyDrones = droneRows.filter(drone => (
+        Boolean(drone.currentOrderId || drone.currentMissionId)
+        || (['flying', 'rerouting'].includes(String(drone.status)) && ['pickup', 'dropoff', 'charging_station'].includes(String(drone.currentTargetType)))
+    )).length;
+    const idleDrones = droneRows.filter(drone => drone.status === 'idle' && !drone.currentOrderId && !drone.currentMissionId).length;
+    const chargingDrones = droneRows.filter(drone => drone.status === 'charging').length;
+    const failedDrones = droneRows.filter(drone => ['failed', 'emergency_landing'].includes(String(drone.status))).length;
 
     return (
         <div className="flex min-h-16 items-center justify-between gap-4 border-b border-slate-200 bg-white px-4">
@@ -55,7 +63,10 @@ export default function TopStatusBar({
                 <StatusPill label="Máy chủ" value={serverStatus === 'connected' ? 'Đã kết nối' : serverStatus} toneValue={serverStatus} />
                 <StatusPill label="Worker" value={translateWorkerStatus(workerStatus)} toneValue={workerStatus} />
                 <StatusPill label="Mô phỏng" value={translateSimulationStatus(simulationStatus)} toneValue={simulationStatus} />
-                <StatusPill label="UAV" value={String(Object.keys(drones).length)} />
+                <StatusPill label="UAV" value={String(droneRows.length)} />
+                <StatusPill label="UAV rảnh" value={String(idleDrones)} toneValue="idle" />
+                <StatusPill label="Đang giao" value={String(busyDrones)} toneValue={busyDrones > 0 ? 'running' : 'idle'} />
+                <StatusPill label="Sạc/lỗi" value={`${chargingDrones}/${failedDrones}`} toneValue={failedDrones > 0 ? 'failed' : chargingDrones > 0 ? 'busy' : 'idle'} />
                 <StatusPill label="Đơn" value={`${orderRows.length}/${activeOrders}/${completedOrders}`} />
                 <StatusPill label="Độ trễ" value={latencyMs !== null ? `${latencyMs}ms` : '-'} />
                 <StatusPill label="Phiên" value={activeSimId ?? '-'} />

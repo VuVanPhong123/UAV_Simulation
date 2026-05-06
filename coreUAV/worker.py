@@ -103,6 +103,9 @@ def main():
         payload = {
             "droneCount": len(drones),
             "drones": drones,
+            "depot": config["map"]["start_latlng"],
+            "simulationMode": "order_dispatch",
+            "hasFixedGoal": False,
             "start": config["map"]["start_latlng"],
             "goal": config["map"]["goal_latlng"],
             "charging_stations": config["map"].get("charging_stations_latlng", []),
@@ -380,12 +383,13 @@ def main():
                 step = 0
                 telemetry_counter = 0
 
-                world = SimulationWorld(config, drone_count)
+                world = SimulationWorld(config, drone_count, idle_on_start=True)
                 transformer = Transformer.from_crs(world.graph.crs_utm, "epsg:4326", always_xy=True)
                 last_path_ids = mark_current_paths()
 
                 send_config()
-                startup_order_batch = payload.get("orderBatch", payload.get("order_batch"))
+                send_all_telemetry()
+                startup_order_batch = payload.get("orderBatch", payload.get("order_batch", payload.get("orders")))
                 if startup_order_batch is not None:
                     if "autoDispatch" in payload or "auto_dispatch" in payload:
                         startup_order_batch = {
@@ -393,10 +397,17 @@ def main():
                             "autoDispatch": payload.get("autoDispatch", payload.get("auto_dispatch"))
                         }
                     process_order_batch(startup_order_batch)
+                    send_all_telemetry()
+                else:
+                    send_event(
+                        EventLevel.INFO.value,
+                        EventCode.ORDER_STATE_UPDATED.value,
+                        "Simulation initialized. Waiting for order batch.",
+                        SYSTEM_DRONE_ID
+                    )
                 send_all_telemetry()
                 if send_wind_shadow_by_default:
                     send_wind_shadow_zones()
-                send_all_planned_paths()
                 drain_world_events()
                 is_running = True
                 print(f"Bat dau simulation {sim_id} cho {frontend_id} voi {drone_count} drone")

@@ -22,6 +22,11 @@ import type {
     WorkerStatus
 } from '../types/simulation';
 
+type StartSimulationInput = number | {
+    droneCount: number;
+    orderBatch?: unknown[];
+};
+
 function terminalToStatus(status?: string): SimulationStatus {
     if (status === 'success' || status === 'stopped') return 'stopped';
     if (status === 'paused') return 'paused';
@@ -119,12 +124,17 @@ export function useSimulationSocket() {
         if (action === 'reset') clearSessionVisuals();
     }, [activeSimId, addLocalEvent, clearSessionVisuals, sendJson]);
 
-    const startSimulation = useCallback((droneCount = 1) => {
+    const startSimulation = useCallback((input: StartSimulationInput = 1) => {
+        const droneCount = typeof input === 'number' ? input : input.droneCount;
+        const orderBatch = typeof input === 'number' ? undefined : input.orderBatch;
         sendJson({
             type: 'request_start_simulation',
             payload: {
                 mapId: 'hanoi_default',
-                droneCount
+                droneCount,
+                orderBatch,
+                autoDispatch: true,
+                simulationMode: 'order_dispatch'
             }
         });
     }, [sendJson]);
@@ -265,6 +275,8 @@ export function useSimulationSocket() {
                 setEventLogs(prev => [
                     {
                         droneId,
+                        orderId: payload.orderId ?? payload.order_id ?? null,
+                        missionId: payload.missionId ?? payload.mission_id ?? null,
                         level: payload.level ?? 'info',
                         code: payload.code ?? 'UNKNOWN',
                         message: payload.message ?? '',

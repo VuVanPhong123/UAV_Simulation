@@ -84,7 +84,9 @@ export default function UavMap({
     onSelectOrder
 }: UavMapProps) {
     const defaultCenter: LatLng = [21.0285, 105.8542];
-    const mapCenter = mapConfig ? mapConfig.start : defaultCenter;
+    const depot = mapConfig?.depot ?? mapConfig?.start ?? defaultCenter;
+    const hasFixedGoal = mapConfig?.hasFixedGoal !== false && mapConfig?.simulationMode !== 'order_dispatch';
+    const mapCenter = mapConfig ? depot : defaultCenter;
     const selectedDrone = selectedDroneId ? drones[selectedDroneId] : null;
     const sampledZones = useMemo(() => {
         if (!layers.windShadow) return [];
@@ -135,12 +137,14 @@ export default function UavMap({
 
                 {mapConfig && (
                     <>
-                        <CircleMarker center={mapConfig.start} radius={6} pathOptions={{ color: '#16a34a', fillColor: '#16a34a', fillOpacity: 1 }}>
-                            <Tooltip>START</Tooltip>
+                        <CircleMarker center={depot} radius={7} pathOptions={{ color: '#16a34a', fillColor: '#16a34a', fillOpacity: 1 }}>
+                            <Tooltip permanent direction="top" className="building-label">Kho UAV</Tooltip>
                         </CircleMarker>
-                        <CircleMarker center={mapConfig.goal} radius={6} pathOptions={{ color: '#dc2626', fillColor: '#dc2626', fillOpacity: 1 }}>
-                            <Tooltip>GOAL</Tooltip>
-                        </CircleMarker>
+                        {hasFixedGoal && (
+                            <CircleMarker center={mapConfig.goal} radius={6} pathOptions={{ color: '#dc2626', fillColor: '#dc2626', fillOpacity: 1 }}>
+                                <Tooltip>Điểm đích mô phỏng</Tooltip>
+                            </CircleMarker>
+                        )}
                         {layers.noFlyZones && mapConfig.no_fly_zones?.map((nfz, idx) => (
                             <Circle key={`nfz-${idx}`} center={nfz.center} radius={nfz.radius} pathOptions={{ color: '#ef4444', fillColor: '#ef4444', fillOpacity: 0.2, dashArray: '5,5' }}>
                                 <Tooltip direction="center" permanent className="building-label !text-red-700 !bg-transparent">NO FLY ZONE</Tooltip>

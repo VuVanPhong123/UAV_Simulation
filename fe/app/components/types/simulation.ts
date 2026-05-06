@@ -43,6 +43,9 @@ export type DroneTelemetry = {
 export type MapConfig = {
     start: LatLng;
     goal: LatLng;
+    depot?: LatLng;
+    simulationMode?: string;
+    hasFixedGoal?: boolean;
     charging_stations?: LatLng[];
     no_fly_zones?: { center: LatLng; radius: number }[];
     droneCount?: number;

@@ -28,8 +28,11 @@ type OrderManagementPanelProps = {
     mapInteractionMode: MapInteractionMode;
     importError: string | null;
     droneCount: number;
+    canStartWithOrders: boolean;
+    startHint: string;
     onSelectOrder: (orderId: string) => void;
     onAddDemoDraftOrders: (orders: DraftOrder[]) => void;
+    onStartWithDraftOrders: () => void;
     onDraftChange: <K extends keyof DraftOrder>(key: K, value: DraftOrder[K]) => void;
     onAddDraftOrder: () => void;
     onRemoveDraftOrder: (orderId: string) => void;
@@ -143,8 +146,11 @@ export default function OrderManagementPanel({
     mapInteractionMode,
     importError,
     droneCount,
+    canStartWithOrders,
+    startHint,
     onSelectOrder,
     onAddDemoDraftOrders,
+    onStartWithDraftOrders,
     onDraftChange,
     onAddDraftOrder,
     onRemoveDraftOrder,
@@ -217,6 +223,28 @@ export default function OrderManagementPanel({
                     </button>
                 </div>
                 {demoHint && <p className="mt-2 text-xs font-semibold text-slate-500">{demoHint}</p>}
+            </section>
+
+            <section className="rounded border border-slate-200 bg-white p-3">
+                <h2 className="border-b border-slate-100 pb-2 text-xs font-bold uppercase text-slate-500">Khởi tạo mô phỏng</h2>
+                <div className="mt-3 grid grid-cols-2 gap-2 text-xs font-semibold text-slate-700">
+                    <span className="text-slate-500">Số UAV</span>
+                    <span className="text-right font-mono">{droneCount}</span>
+                    <span className="text-slate-500">Đơn nháp</span>
+                    <span className="text-right font-mono">{draftOrders.length}</span>
+                </div>
+                <button
+                    disabled={Boolean(activeSimId) || !canStartWithOrders}
+                    onClick={onStartWithDraftOrders}
+                    className="mt-3 w-full rounded bg-blue-600 px-3 py-2 text-xs font-bold text-white hover:bg-blue-700 disabled:bg-slate-300 disabled:text-slate-500"
+                >
+                    Bắt đầu mô phỏng với danh sách đơn
+                </button>
+                {(Boolean(activeSimId) || !canStartWithOrders) && (
+                    <p className="mt-2 text-xs font-semibold text-slate-500">
+                        {activeSimId ? 'Mô phỏng đang chạy, dùng nút gửi thêm đơn hàng bên dưới.' : startHint}
+                    </p>
+                )}
             </section>
 
             <section className="rounded border border-slate-200 bg-white p-3">
@@ -372,7 +400,7 @@ export default function OrderManagementPanel({
                         onClick={onSubmitDraftOrders}
                         className="rounded bg-blue-600 px-3 py-2 text-xs font-bold text-white hover:bg-blue-700 disabled:bg-slate-300 disabled:text-slate-500"
                     >
-                        Gửi đơn hàng
+                        Gửi thêm đơn hàng
                     </button>
                     <button
                         disabled={!activeSimId}

@@ -282,6 +282,17 @@ async function runScenario() {
     payload: {
       mapId: 'hanoi_default',
       droneCount: 1,
+      orderBatch: [
+        {
+          orderId: 'order_test_1',
+          pickup: [21.0285, 105.8542],
+          dropoff: [21.0290, 105.8550],
+          payloadKg: 1.2,
+          priority: 'normal',
+        },
+      ],
+      autoDispatch: true,
+      simulationMode: 'order_dispatch',
     },
   });
 
@@ -302,24 +313,6 @@ async function runScenario() {
     fail('planned path altitude received', 'planned_path missing payload.path3d altitude points');
   }
   pass('planned path altitude received');
-
-  clearBacklog();
-  send({
-    type: 'order_batch',
-    simId,
-    payload: {
-      autoDispatch: true,
-      orders: [
-        {
-          orderId: 'order_test_1',
-          pickup: [21.0285, 105.8542],
-          dropoff: [21.0290, 105.8550],
-          payloadKg: 1.2,
-          priority: 'normal',
-        },
-      ],
-    },
-  });
 
   const dispatchedOrderMessage = await waitFor(
     (message) => (
@@ -359,7 +352,7 @@ async function runScenario() {
     (message) => {
       if (message.simId !== simId || !['order_update', 'order_state'].includes(message.type)) return false;
       const order = findOrder(message, 'order_test_1');
-      return order && ['picked_up', 'delivering', 'completed'].includes(order.status);
+      return order && ['picked_up', 'delivering'].includes(order.status);
     },
     180000,
     'pickup/dropoff mission progress observed'
@@ -481,6 +474,45 @@ async function runScenario() {
     payload: {
       mapId: 'hanoi_default',
       droneCount: 3,
+      orderBatch: [
+        {
+          orderId: 'order_multi_1',
+          pickup: [21.0285, 105.8542],
+          dropoff: [21.0290, 105.8550],
+          payloadKg: 0.8,
+          priority: 'normal',
+        },
+        {
+          orderId: 'order_multi_2',
+          pickup: [21.0278, 105.8536],
+          dropoff: [21.0300, 105.8560],
+          payloadKg: 1.1,
+          priority: 'high',
+        },
+        {
+          orderId: 'order_multi_3',
+          pickup: [21.0268, 105.8528],
+          dropoff: [21.0296, 105.8538],
+          payloadKg: 1.5,
+          priority: 'urgent',
+        },
+        {
+          orderId: 'order_multi_4',
+          pickup: [21.0290, 105.8550],
+          dropoff: [21.0278, 105.8536],
+          payloadKg: 1.8,
+          priority: 'normal',
+        },
+        {
+          orderId: 'order_multi_5',
+          pickup: [21.0300, 105.8560],
+          dropoff: [21.0268, 105.8528],
+          payloadKg: 2.0,
+          priority: 'high',
+        },
+      ],
+      autoDispatch: true,
+      simulationMode: 'order_dispatch',
     },
   });
 
@@ -526,75 +558,33 @@ async function runScenario() {
   });
   pass('multi-drone planned paths received');
 
-  clearBacklog();
-  send({
-    type: 'order_batch',
-    simId,
-    payload: {
-      autoDispatch: true,
-      orders: [
-        {
-          orderId: 'order_multi_1',
-          pickup: [21.0285, 105.8542],
-          dropoff: [21.0290, 105.8550],
-          payloadKg: 0.8,
-          priority: 'normal',
-        },
-        {
-          orderId: 'order_multi_2',
-          pickup: [21.0278, 105.8536],
-          dropoff: [21.0300, 105.8560],
-          payloadKg: 1.1,
-          priority: 'high',
-        },
-        {
-          orderId: 'order_multi_3',
-          pickup: [21.0268, 105.8528],
-          dropoff: [21.0296, 105.8538],
-          payloadKg: 1.5,
-          priority: 'urgent',
-        },
-        {
-          orderId: 'order_multi_4',
-          pickup: [21.0290, 105.8550],
-          dropoff: [21.0278, 105.8536],
-          payloadKg: 1.8,
-          priority: 'normal',
-        },
-        {
-          orderId: 'order_multi_5',
-          pickup: [21.0300, 105.8560],
-          dropoff: [21.0268, 105.8528],
-          payloadKg: 2.0,
-          priority: 'high',
-        },
-      ],
-    },
-  });
-
-  await waitFor(
-    (message) => {
-      rememberRuntimeMessage(message);
-      return message.simId === simId
-        && ['order_update', 'order_state', 'mission_update'].includes(message.type)
-        && activeMultiOrderCount() >= 3;
-    },
-    90000,
-    'multi-order dispatch accepted'
-  );
+  if (activeMultiOrderCount() < 3) {
+    await waitFor(
+      (message) => {
+        rememberRuntimeMessage(message);
+        return message.simId === simId
+          && ['order_update', 'order_state', 'mission_update'].includes(message.type)
+          && activeMultiOrderCount() >= 3;
+      },
+      90000,
+      'multi-order dispatch accepted'
+    );
+  }
   pass('multi-order dispatch accepted');
 
-  await waitFor(
-    (message) => {
-      rememberRuntimeMessage(message);
-      return message.simId === simId
-        && ['telemetry', 'order_update', 'order_state', 'mission_update'].includes(message.type)
-        && multiMissionCount() >= 3
-        && (observedMissionTelemetry || progressedMultiOrderCount() >= 1);
-    },
-    120000,
-    'multi-order mission progress observed'
-  );
+  if (multiMissionCount() < 3 || (!observedMissionTelemetry && progressedMultiOrderCount() < 1)) {
+    await waitFor(
+      (message) => {
+        rememberRuntimeMessage(message);
+        return message.simId === simId
+          && ['telemetry', 'order_update', 'order_state', 'mission_update'].includes(message.type)
+          && multiMissionCount() >= 3
+          && (observedMissionTelemetry || progressedMultiOrderCount() >= 1);
+      },
+      120000,
+      'multi-order mission progress observed'
+    );
+  }
   pass('multi-order mission progress observed');
 
   clearBacklog();
