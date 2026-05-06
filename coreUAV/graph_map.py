@@ -1,9 +1,8 @@
 import numpy as np
 import heapq
-import geopandas as gpd
 from pyproj import Transformer
-from shapely.geometry import Point
 from energy_model import rain_factor, temperature_factor, wind_factor
+from map_cache import load_map_cache
 
 
 ALTITUDE_LEVELS = [20.0, 35.0, 50.0, 70.0, 90.0, 120.0]
@@ -24,21 +23,82 @@ def path_point_altitude(point, default_altitude):
 class WaypointGraph:
     def __init__(self, config):
         self.config = config
-        self.resolution = 5.0
+        self.performance_config = config.get("performance", {})
+        self.resolution = float(self.performance_config.get("grid_resolution", 10.0))
         self.safety_margin = config.get('obstacle_avoidance', {}).get('safety_margin', 5.0)
         self.altitude_levels = self._build_altitude_levels(config)
-        print("Đang nạp dữ liệu tòa nhà 2.5D...")
+        self.loaded_from_cache = False
+        self.height_grid = None
+        self.static_nfz_mask = None
+        self.valid_masks = None
+        self.buildings = None
+        self.dynamic_obstacles = []
+        if self.performance_config.get("use_map_cache", True):
+            map_id = config.get("map", {}).get("map_id", "hanoi_default")
+            try:
+                self._load_cached_grid(map_id)
+                print(f"[Graph] Loaded map cache '{map_id}' ({self.cols}x{self.rows}, {len(self.altitude_levels)} altitude levels).")
+                print(f"-> 2.5D environment ready with {self.cols}x{self.rows} grid.")
+                return
+            except Exception as exc:
+                print(f"[Graph] Cache unavailable, falling back to legacy build: {exc}")
+
+        import geopandas as gpd
+        print("[Graph] Loading building data for legacy 2.5D grid...")
         self.buildings = gpd.read_file('hanoi_buildings.geojson')
         
         self.buildings = self.buildings.to_crs(epsg=32648) 
         self.crs_utm = self.buildings.crs
         self.transformer = Transformer.from_crs("epsg:4326", self.crs_utm, always_xy=True)
         
-        print("Đang giăng lưới Không gian bay...")
+        print("[Graph] Building legacy flight grid...")
         self._build_2_5d_grid(config)
         self.dynamic_obstacles = []
         
-        print(f"-> Môi trường 2.5D hoàn tất với {self.cols}x{self.rows} mắt lưới!")
+        print(f"-> 2.5D environment ready with {self.cols}x{self.rows} grid.")
+
+    def _load_cached_grid(self, map_id):
+        cache = load_map_cache(map_id)
+        metadata = cache.metadata
+        self.loaded_from_cache = True
+        self.resolution = float(metadata["resolution"])
+        self.min_x = float(metadata["minX"])
+        self.min_y = float(metadata["minY"])
+        self.rows = int(metadata["rows"])
+        self.cols = int(metadata["cols"])
+        self.crs_utm = metadata["crs"]
+        self.transformer = Transformer.from_crs("epsg:4326", self.crs_utm, always_xy=True)
+        self.altitude_levels = [float(level) for level in metadata["altitudeLevels"]]
+        self.height_grid = cache.height_grid
+        self.static_nfz_mask = cache.static_nfz_mask
+        self.valid_masks = cache.valid_masks
+        self.nodes = {
+            (i, j): (self.min_x + i * self.resolution, self.min_y + j * self.resolution)
+            for j in range(self.rows)
+            for i in range(self.cols)
+        }
+        self.heights = {}
+        self.start = tuple(metadata["startNode"])
+        self.goal = tuple(metadata["goalNode"])
+        self.charging_stations = [tuple(node) for node in metadata.get("chargingStationNodes", [])]
+        self._configure_static_nfz_from_config()
+
+    def _configure_static_nfz_from_config(self):
+        self.nfz_utm = []
+        if 'no_fly_zones' in self.config.get('map', {}):
+            for nfz in self.config['map']['no_fly_zones']:
+                lat, lon = nfz['center']
+                r = nfz['radius']
+                x, y = self.transformer.transform(lon, lat)
+                self.nfz_utm.append((x, y, r))
+
+    def get_height(self, node):
+        if self.height_grid is not None:
+            i, j = node
+            if 0 <= i < self.cols and 0 <= j < self.rows:
+                return float(self.height_grid[j, i])
+            return 0.0
+        return float(self.heights.get(node, 0.0))
 
     def _build_altitude_levels(self, config):
         drone_config = config.get("drone", {})
@@ -49,8 +109,10 @@ class WaypointGraph:
         if max_altitude < min_altitude:
             min_altitude, max_altitude = max_altitude, min_altitude
 
+        configured_levels = self.performance_config.get("altitude_levels") if hasattr(self, "performance_config") else None
+        base_levels = configured_levels or ALTITUDE_LEVELS
         candidates = [
-            float(level) for level in ALTITUDE_LEVELS
+            float(level) for level in base_levels
             if min_altitude <= float(level) <= max_altitude
         ]
         candidates.extend([min_altitude, normal_altitude, max_altitude])
@@ -70,6 +132,11 @@ class WaypointGraph:
         return self.altitude_levels.index(nearest)
 
     def is_in_nfz(self, node):
+        if self.static_nfz_mask is not None:
+            i, j = node
+            if 0 <= i < self.cols and 0 <= j < self.rows:
+                return bool(self.static_nfz_mask[j, i])
+            return True
         x, y = self.nodes.get(node, (0, 0))
         for nx, ny, r in self.nfz_utm:
             if np.hypot(x - nx, y - ny) <= (r + self.safety_margin):
@@ -107,9 +174,14 @@ class WaypointGraph:
         """
         if node not in self.nodes:
             return False
-        if self.is_in_nfz(node):
+        if self.valid_masks is not None:
+            altitude_idx = self.get_altitude_index(altitude)
+            i, j = node
+            if not bool(self.valid_masks[altitude_idx, j, i]):
+                return False
+        elif self.is_in_nfz(node):
             return False
-        if self.heights.get(node, 0.0) + self.safety_margin >= altitude:
+        elif self.get_height(node) + self.safety_margin >= altitude:
             return False
         if self.is_in_dynamic_obs(node, altitude):
             return False
@@ -120,6 +192,8 @@ class WaypointGraph:
         print("   [Graph] Da don dep toan bo vat can dong khoi ban do.")
     
     def _build_2_5d_grid(self, config):
+        from shapely.geometry import Point
+
         pts_gps = [config['map']['start_latlng'], config['map']['goal_latlng']]
         if 'charging_stations_latlng' in config['map']:
             pts_gps.extend(config['map']['charging_stations_latlng'])
@@ -146,6 +220,8 @@ class WaypointGraph:
         sindex = self.buildings.sindex
         self.nodes = {}
         self.heights = {}
+        self.height_grid = np.zeros((self.rows, self.cols), dtype=np.float32)
+        static_nfz_mask = np.zeros((self.rows, self.cols), dtype=bool)
         
         for i in range(self.cols):
             for j in range(self.rows):
@@ -159,13 +235,24 @@ class WaypointGraph:
                 precise_matches = possible_matches[possible_matches.intersects(search_area)]
                 
                 if not precise_matches.empty:
-                    self.heights[(i, j)] = float(precise_matches['estimated_height'].max())
+                    height = float(precise_matches['estimated_height'].max())
                 else:
-                    self.heights[(i, j)] = 0.0
+                    height = 0.0
+                self.heights[(i, j)] = height
+                self.height_grid[j, i] = height
+
+                for nx, ny, r in self.nfz_utm:
+                    if np.hypot(x - nx, y - ny) <= (r + self.safety_margin):
+                        static_nfz_mask[j, i] = True
+                        break
 
         self.start = self._get_nearest_node(config['map']['start_latlng'])
         self.goal = self._get_nearest_node(config['map']['goal_latlng'])
         self.charging_stations = [self._get_nearest_node(ll) for ll in config['map'].get('charging_stations_latlng', [])]
+        self.static_nfz_mask = static_nfz_mask
+        self.valid_masks = np.zeros((len(self.altitude_levels), self.rows, self.cols), dtype=bool)
+        for idx, altitude in enumerate(self.altitude_levels):
+            self.valid_masks[idx] = (self.height_grid + self.safety_margin < altitude) & (~self.static_nfz_mask)
 
     def _get_nearest_node(self, latlng):
         x, y = self.transformer.transform(latlng[1], latlng[0])
@@ -191,7 +278,7 @@ class WaypointGraph:
             
             if not (0 <= check_x < self.cols and 0 <= check_y < self.rows):
                 break
-            if self.heights.get((check_x, check_y), 0.0) >= altitude:
+            if self.get_height((check_x, check_y)) >= altitude:
                 return True
                 
         return False
@@ -250,7 +337,8 @@ class WaypointGraph:
         return wf * tf * rf
 
     def a_star(self, start, goal, current_altitude=20.0, wind_dir=0.0, wind_speed=0.0, ambient_temp=25.0, is_raining=False):
-        print(f"   [A*] Tìm đường Energy-Aware từ {start} đến {goal} | Gió {wind_speed}m/s hướng {wind_dir}°")
+        if self.performance_config.get("verbose_planner_logs", False):
+            print(f"   [A*] Planning from {start} to {goal} | wind {wind_speed}m/s to {wind_dir} deg")
         frontier = []
         heapq.heappush(frontier, (0, start))
         came_from = {start: None}
@@ -274,7 +362,7 @@ class WaypointGraph:
                     continue
                 if self.is_in_nfz(nxt):
                     continue
-                if self.heights[nxt] >= current_altitude and nxt != goal and nxt not in self.charging_stations: 
+                if self.get_height(nxt) >= current_altitude and nxt != goal and nxt not in self.charging_stations: 
                     continue 
                     
                 energy_multiplier = self.get_energy_multiplier(
@@ -304,9 +392,11 @@ class WaypointGraph:
             
         if path and path[-1] == start:
             path.reverse()
-            print(f"   [A*] Tìm thấy đường đi! (Gồm {len(path)} node)")
+            if self.performance_config.get("verbose_planner_logs", False):
+                print(f"   [A*] Found path with {len(path)} nodes.")
             return path
-        print(f"   [A*] THẤT BẠI: Bị kẹt, không thể tìm thấy đường đi!")
+        if self.performance_config.get("verbose_planner_logs", False):
+            print("   [A*] Failed: no safe path found.")
         return []
 
     def a_star_2_5d(
@@ -319,10 +409,13 @@ class WaypointGraph:
         ambient_temp=25.0,
         is_raining=False
     ):
-        print(f"   [A* 2.5D] Planning from {start} to {goal} | wind {wind_speed}m/s to {wind_dir} deg")
+        verbose = self.performance_config.get("verbose_planner_logs", False)
+        if verbose:
+            print(f"   [A* 2.5D] Planning from {start} to {goal} | wind {wind_speed}m/s to {wind_dir} deg")
 
         if start not in self.nodes or goal not in self.nodes:
-            print("   [A* 2.5D] Failed: start or goal is outside graph.")
+            if verbose:
+                print("   [A* 2.5D] Failed: start or goal is outside graph.")
             return []
 
         normal_altitude = float(self.config.get("drone", {}).get("normal_altitude", current_altitude))
@@ -334,12 +427,14 @@ class WaypointGraph:
                 if self.is_node_clear_at_altitude(start, level)
             ]
             if not clear_indices:
-                print("   [A* 2.5D] Failed: start node is blocked at all altitude levels.")
+                if verbose:
+                    print("   [A* 2.5D] Failed: start node is blocked at all altitude levels.")
                 return []
             start_idx = min(clear_indices, key=lambda idx: abs(self.altitude_levels[idx] - current_altitude))
 
         if not any(self.is_node_clear_at_altitude(goal, level) for level in self.altitude_levels):
-            print("   [A* 2.5D] Failed: goal node is blocked at all altitude levels.")
+            if verbose:
+                print("   [A* 2.5D] Failed: goal node is blocked at all altitude levels.")
             return []
 
         start_state = (start[0], start[1], start_idx)
@@ -413,7 +508,8 @@ class WaypointGraph:
                     came_from[next_state] = current_state
 
         if goal_state is None:
-            print("   [A* 2.5D] Failed: no safe path found.")
+            if verbose:
+                print("   [A* 2.5D] Failed: no safe path found.")
             return []
 
         states = []
@@ -430,12 +526,14 @@ class WaypointGraph:
             }
             for state in states
         ]
-        print(f"   [A* 2.5D] Found path with {len(path)} points.")
+        if verbose:
+            print(f"   [A* 2.5D] Found path with {len(path)} points.")
         return path
 
     def clear_dynamic_obstacles(self):
         self.dynamic_obstacles = []
-        print("   [Graph] Đã dọn dẹp toàn bộ vật cản động khỏi bản đồ.")
+        if self.performance_config.get("verbose_planner_logs", False):
+            print("   [Graph] Cleared dynamic obstacles.")
 
     def is_line_of_sight(self, node_a, node_b, altitude):
         x0, y0 = int(node_a[0]), int(node_a[1])
@@ -476,8 +574,10 @@ class WaypointGraph:
         ]
         if len(points) <= 2:
             return points
+        verbose = self.performance_config.get("verbose_planner_logs", False)
         
-        print(f"   [Làm mịn] Đang ép thẳng quỹ đạo bay...")
+        if verbose:
+            print("   [Smooth] Simplifying flight path...")
         smoothed = [points[0]]
         curr = 0
         while curr < len(points) - 1:
@@ -497,7 +597,8 @@ class WaypointGraph:
             smoothed.append(points[next_node])
             curr = next_node
             
-        print(f"   [Làm mịn] Rút gọn từ {len(raw_path)} node xuống còn {len(smoothed)} node.")
+        if verbose:
+            print(f"   [Smooth] Reduced from {len(raw_path)} to {len(smoothed)} nodes.")
         return smoothed
 
     def estimate_path_cost(self, path, altitude, wind_dir=0.0, wind_speed=0.0, ambient_temp=25.0, is_raining=False):

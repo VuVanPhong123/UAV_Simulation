@@ -123,13 +123,13 @@ export type IncomingMessage = {
 
 export const DEFAULT_LAYER_TOGGLES: LayerToggles = {
     buildings: true,
-    buildingLabels: true,
+    buildingLabels: false,
     noFlyZones: true,
     chargingStations: true,
     plannedPath: true,
     pathHistory: true,
     dynamicObstacles: true,
-    windShadow: true,
+    windShadow: false,
     sensorRange: true,
-    weatherOverlay: true
+    weatherOverlay: false
 };

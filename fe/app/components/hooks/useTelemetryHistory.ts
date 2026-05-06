@@ -1,9 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { DroneTelemetry, DronesById, LatLng, PathHistoryByDrone } from '../types/simulation';
 
-const MAX_HISTORY = 300;
+const MAX_HISTORY = 120;
 
 function pushLimited<T>(items: T[], item: T) {
     return [...items, item].slice(-MAX_HISTORY);
@@ -11,55 +11,84 @@ function pushLimited<T>(items: T[], item: T) {
 
 type NumberHistoryByDrone = Record<string, number[]>;
 
-function updateNumberHistory(items: NumberHistoryByDrone, droneId: string, value: number) {
-    return {
-        ...items,
-        [droneId]: pushLimited(items[droneId] ?? [], value)
-    };
-}
+type TelemetryHistories = {
+    batteryHistoryByDrone: NumberHistoryByDrone;
+    temperatureHistoryByDrone: NumberHistoryByDrone;
+    altitudeHistoryByDrone: NumberHistoryByDrone;
+    pathHistoryByDrone: PathHistoryByDrone;
+};
 
-function updatePathHistory(items: PathHistoryByDrone, droneId: string, value: LatLng) {
-    return {
-        ...items,
-        [droneId]: pushLimited(items[droneId] ?? [], value)
-    };
-}
+const EMPTY_HISTORIES: TelemetryHistories = {
+    batteryHistoryByDrone: {},
+    temperatureHistoryByDrone: {},
+    altitudeHistoryByDrone: {},
+    pathHistoryByDrone: {}
+};
 
 export function useTelemetryHistory(drones: DronesById, selectedDroneId: string | null) {
-    const [batteryHistoryByDrone, setBatteryHistoryByDrone] = useState<NumberHistoryByDrone>({});
-    const [temperatureHistoryByDrone, setTemperatureHistoryByDrone] = useState<NumberHistoryByDrone>({});
-    const [altitudeHistoryByDrone, setAltitudeHistoryByDrone] = useState<NumberHistoryByDrone>({});
-    const [pathHistoryByDrone, setPathHistoryByDrone] = useState<PathHistoryByDrone>({});
+    const [histories, setHistories] = useState<TelemetryHistories>(EMPTY_HISTORIES);
+    const lastStepByDroneRef = useRef<Record<string, number>>({});
 
     const resetHistory = useCallback(() => {
-        setBatteryHistoryByDrone({});
-        setTemperatureHistoryByDrone({});
-        setAltitudeHistoryByDrone({});
-        setPathHistoryByDrone({});
+        lastStepByDroneRef.current = {};
+        setHistories(EMPTY_HISTORIES);
     }, []);
 
     useEffect(() => {
-        Object.values(drones).forEach((droneState: DroneTelemetry) => {
-            const droneId = droneState.droneId ?? 'drone_1';
-            const battery = droneState.batteryPercent ?? droneState.battery;
-            if (typeof battery === 'number') {
-                setBatteryHistoryByDrone(prev => updateNumberHistory(prev, droneId, battery));
-            }
-            if (typeof droneState.temperature === 'number') {
-                const temperature = droneState.temperature;
-                setTemperatureHistoryByDrone(prev => updateNumberHistory(prev, droneId, temperature));
-            }
-            if (typeof droneState.altitude === 'number') {
-                const altitude = droneState.altitude;
-                setAltitudeHistoryByDrone(prev => updateNumberHistory(prev, droneId, altitude));
-            }
-            if (droneState.pos) {
-                setPathHistoryByDrone(prev => updatePathHistory(prev, droneId, droneState.pos as LatLng));
-            }
+        const droneStates = Object.values(drones);
+        if (droneStates.length === 0) return;
+
+        setHistories(prev => {
+            let changed = false;
+            const next: TelemetryHistories = {
+                batteryHistoryByDrone: { ...prev.batteryHistoryByDrone },
+                temperatureHistoryByDrone: { ...prev.temperatureHistoryByDrone },
+                altitudeHistoryByDrone: { ...prev.altitudeHistoryByDrone },
+                pathHistoryByDrone: { ...prev.pathHistoryByDrone }
+            };
+
+            droneStates.forEach((droneState: DroneTelemetry) => {
+                const droneId = droneState.droneId ?? 'drone_1';
+                if (
+                    typeof droneState.step === 'number'
+                    && lastStepByDroneRef.current[droneId] === droneState.step
+                ) {
+                    return;
+                }
+                if (typeof droneState.step === 'number') {
+                    lastStepByDroneRef.current[droneId] = droneState.step;
+                }
+
+                const battery = droneState.batteryPercent ?? droneState.battery;
+                if (typeof battery === 'number') {
+                    next.batteryHistoryByDrone[droneId] = pushLimited(next.batteryHistoryByDrone[droneId] ?? [], battery);
+                    changed = true;
+                }
+                if (typeof droneState.temperature === 'number') {
+                    next.temperatureHistoryByDrone[droneId] = pushLimited(next.temperatureHistoryByDrone[droneId] ?? [], droneState.temperature);
+                    changed = true;
+                }
+                if (typeof droneState.altitude === 'number') {
+                    next.altitudeHistoryByDrone[droneId] = pushLimited(next.altitudeHistoryByDrone[droneId] ?? [], droneState.altitude);
+                    changed = true;
+                }
+                if (droneState.pos) {
+                    next.pathHistoryByDrone[droneId] = pushLimited(next.pathHistoryByDrone[droneId] ?? [], droneState.pos as LatLng);
+                    changed = true;
+                }
+            });
+
+            return changed ? next : prev;
         });
     }, [drones]);
 
     const selectedId = selectedDroneId ?? '';
+    const {
+        batteryHistoryByDrone,
+        temperatureHistoryByDrone,
+        altitudeHistoryByDrone,
+        pathHistoryByDrone
+    } = histories;
 
     return {
         batteryHistoryByDrone,

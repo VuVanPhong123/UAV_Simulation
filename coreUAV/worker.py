@@ -13,7 +13,7 @@ from statuses import DroneStatus, EventCode, EventLevel
 
 WS_URL = "ws://localhost:8080"
 SYSTEM_DRONE_ID = "system"
-TELEMETRY_EVERY_N_STEPS = 2
+DEFAULT_TELEMETRY_EVERY_N_STEPS = 5
 
 
 def now_ms():
@@ -40,6 +40,12 @@ def main():
 
     with open("config.yaml", "r") as f:
         config = yaml.safe_load(f)
+    performance_config = config.get("performance", {})
+    telemetry_every_n_steps = max(
+        1,
+        int(performance_config.get("telemetry_every_n_steps", DEFAULT_TELEMETRY_EVERY_N_STEPS))
+    )
+    send_wind_shadow_by_default = bool(performance_config.get("send_wind_shadow_by_default", False))
 
     world = None
     transformer = None
@@ -303,7 +309,8 @@ def main():
 
                 send_config()
                 send_all_telemetry()
-                send_wind_shadow_zones()
+                if send_wind_shadow_by_default:
+                    send_wind_shadow_zones()
                 send_all_planned_paths()
                 drain_world_events()
                 is_running = True
@@ -347,12 +354,18 @@ def main():
                     f"Weather changed: wind_to={world.wind_dir} deg, speed={world.wind_speed} m/s, temp={world.ambient_temp} C, rain={'on' if world.is_raining else 'off'}. Replanning paths.",
                     SYSTEM_DRONE_ID
                 )
-                send_wind_shadow_zones()
+                if send_wind_shadow_by_default:
+                    send_wind_shadow_zones()
                 send_all_planned_paths()
                 send_all_telemetry()
                 drain_world_events()
                 last_path_ids = mark_current_paths()
                 is_running = was_running
+
+            elif msg_type == "request_wind_shadow":
+                if not is_assigned or reject_wrong_sim(data):
+                    continue
+                send_wind_shadow_zones()
 
             elif msg_type == "command":
                 if not is_assigned or reject_wrong_sim(data):
@@ -377,7 +390,8 @@ def main():
                     step = 0
                     telemetry_counter = 0
                     send_all_telemetry()
-                    send_wind_shadow_zones()
+                    if send_wind_shadow_by_default:
+                        send_wind_shadow_zones()
                     send_all_planned_paths()
                     drain_world_events()
                     last_path_ids = mark_current_paths()
@@ -409,7 +423,7 @@ def main():
                 step += 1
                 drain_world_events()
                 telemetry_counter += 1
-                if telemetry_counter >= TELEMETRY_EVERY_N_STEPS:
+                if telemetry_counter >= telemetry_every_n_steps:
                     send_all_telemetry()
                     telemetry_counter = 0
 

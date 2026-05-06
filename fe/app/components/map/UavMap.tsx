@@ -71,10 +71,13 @@ export default function UavMap({
     const mapCenter = mapConfig ? mapConfig.start : defaultCenter;
     const selectedDrone = selectedDroneId ? drones[selectedDroneId] : null;
     const sampledZones = useMemo(() => {
-        if (windShadowZones.length <= 2000) return windShadowZones;
-        const step = Math.ceil(windShadowZones.length / 2000);
+        if (!layers.windShadow) return [];
+        if (windShadowZones.length <= 500) return windShadowZones;
+        const step = Math.ceil(windShadowZones.length / 500);
         return windShadowZones.filter((_, idx) => idx % step === 0);
-    }, [windShadowZones]);
+    }, [layers.windShadow, windShadowZones]);
+    const selectedPlannedPath = selectedDroneId ? plannedPaths[selectedDroneId] ?? [] : [];
+    const selectedPathHistory = selectedDroneId ? pathHistoryByDrone[selectedDroneId] ?? [] : [];
 
     return (
         <div className="relative h-full w-full overflow-hidden bg-slate-100">
@@ -121,38 +124,30 @@ export default function UavMap({
                     </>
                 )}
 
-                {layers.plannedPath && Object.entries(plannedPaths).map(([droneId, path]) => {
-                    if (path.length === 0) return null;
-                    const selected = droneId === selectedDroneId;
-                    return (
-                        <Polyline
-                            key={`planned-${droneId}`}
-                            positions={path}
-                            pathOptions={{
-                                color: selected ? '#f97316' : '#94a3b8',
-                                weight: selected ? 4 : 2,
-                                opacity: selected ? 0.85 : 0.45,
-                                dashArray: selected ? '8, 8' : '4, 10'
-                            }}
-                        />
-                    );
-                })}
+                {layers.plannedPath && selectedDroneId && selectedPlannedPath.length > 0 && (
+                    <Polyline
+                        key={`planned-${selectedDroneId}`}
+                        positions={selectedPlannedPath}
+                        pathOptions={{
+                            color: '#f97316',
+                            weight: 4,
+                            opacity: 0.85,
+                            dashArray: '8, 8'
+                        }}
+                    />
+                )}
 
-                {layers.pathHistory && Object.entries(pathHistoryByDrone).map(([droneId, history]) => {
-                    if (history.length === 0) return null;
-                    const selected = droneId === selectedDroneId;
-                    return (
-                        <Polyline
-                            key={`history-${droneId}`}
-                            positions={history}
-                            pathOptions={{
-                                color: selected ? '#2563eb' : '#64748b',
-                                weight: selected ? 3 : 2,
-                                opacity: selected ? 0.7 : 0.35
-                            }}
-                        />
-                    );
-                })}
+                {layers.pathHistory && selectedDroneId && selectedPathHistory.length > 0 && (
+                    <Polyline
+                        key={`history-${selectedDroneId}`}
+                        positions={selectedPathHistory}
+                        pathOptions={{
+                            color: '#2563eb',
+                            weight: 3,
+                            opacity: 0.7
+                        }}
+                    />
+                )}
 
                 {layers.windShadow && sampledZones.map((pos, idx) => (
                     <CircleMarker key={`shadow-${idx}`} center={pos} radius={2} pathOptions={{ color: '#22c55e', fillColor: '#22c55e', fillOpacity: 0.5 }} />
