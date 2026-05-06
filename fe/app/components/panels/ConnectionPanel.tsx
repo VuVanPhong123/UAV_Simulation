@@ -1,6 +1,7 @@
 'use client';
 
 import type { ServerStatus, SimulationStatus, WorkerStatus } from '../types/simulation';
+import { translateSimulationStatus, translateWorkerStatus } from '../utils/labels';
 
 type ConnectionPanelProps = {
     serverStatus: ServerStatus;
@@ -13,17 +14,17 @@ type ConnectionPanelProps = {
 
 export default function ConnectionPanel(props: ConnectionPanelProps) {
     const rows = [
-        ['Server', props.serverStatus],
-        ['Worker', props.workerStatus],
-        ['Simulation', props.simulationStatus],
-        ['Sim ID', props.activeSimId ?? '-'],
-        ['Frontend', props.frontendId ?? '-'],
-        ['Latency', props.latencyMs !== null ? `${props.latencyMs}ms` : '-']
+        ['Máy chủ', props.serverStatus === 'connected' ? 'Đã kết nối' : props.serverStatus],
+        ['Worker', translateWorkerStatus(props.workerStatus)],
+        ['Mô phỏng', translateSimulationStatus(props.simulationStatus)],
+        ['Phiên', props.activeSimId ?? '-'],
+        ['Giao diện', props.frontendId ?? '-'],
+        ['Độ trễ', props.latencyMs !== null ? `${props.latencyMs}ms` : '-']
     ];
 
     return (
         <section className="rounded border border-slate-200 bg-white p-3">
-            <h2 className="border-b border-slate-100 pb-2 text-xs font-bold uppercase text-slate-500">Connection</h2>
+            <h2 className="border-b border-slate-100 pb-2 text-xs font-bold uppercase text-slate-500">Kết nối</h2>
             <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 font-mono text-xs font-bold text-slate-700">
                 {rows.map(([label, value]) => (
                     <div key={label} className="contents">

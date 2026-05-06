@@ -64,9 +64,9 @@ export default function ControlPanel({
 
     return (
         <section className="rounded border border-slate-200 bg-white p-3">
-            <h2 className="border-b border-slate-100 pb-2 text-xs font-bold uppercase text-slate-500">Controls</h2>
+            <h2 className="border-b border-slate-100 pb-2 text-xs font-bold uppercase text-slate-500">Điều khiển mô phỏng</h2>
             <label className="mt-3 block text-xs font-semibold text-slate-600">
-                Drone count: {droneCount}
+                Số UAV: {droneCount}
                 <input
                     className="mt-1 w-full"
                     type="range"
@@ -78,12 +78,12 @@ export default function ControlPanel({
                 />
             </label>
             <div className="mt-3 grid grid-cols-2 gap-2">
-                <Button variant="primary" disabled={startDisabled} onClick={onStart}>Start</Button>
-                <Button disabled={pauseDisabled} onClick={onPause}>Pause</Button>
-                <Button disabled={resumeDisabled} onClick={onResume}>Resume</Button>
-                <Button disabled={commandDisabled} onClick={onReset}>Reset</Button>
+                <Button variant="primary" disabled={startDisabled} onClick={onStart}>Bắt đầu</Button>
+                <Button disabled={pauseDisabled} onClick={onPause}>Tạm dừng</Button>
+                <Button disabled={resumeDisabled} onClick={onResume}>Tiếp tục</Button>
+                <Button disabled={commandDisabled} onClick={onReset}>Đặt lại</Button>
                 <div className="col-span-2">
-                    <Button variant="danger" disabled={commandDisabled} onClick={onStop}>Stop</Button>
+                    <Button variant="danger" disabled={commandDisabled} onClick={onStop}>Dừng</Button>
                 </div>
             </div>
         </section>

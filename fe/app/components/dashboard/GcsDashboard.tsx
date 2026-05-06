@@ -3,19 +3,35 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { GeoJsonObject } from 'geojson';
 import TopStatusBar from './TopStatusBar';
-import GcsSidebar from './GcsSidebar';
+import LeftNavigation from './LeftNavigation';
+import RightDetailPanel from './RightDetailPanel';
+import BottomEventPanel from './BottomEventPanel';
 import UavMap from '../map/UavMap';
 import { useSimulationSocket } from '../hooks/useSimulationSocket';
 import { useTelemetryHistory } from '../hooks/useTelemetryHistory';
 import {
     DEFAULT_LAYER_TOGGLES,
+    type ActiveDashboardSection,
+    type DraftOrder,
     type DynamicObstacle,
     type LatLng,
     type LayerToggles,
+    type MapInteractionMode,
     type ObstacleConfig,
     type ObstacleType,
+    type OrderPriority,
     type WeatherState
 } from '../types/simulation';
+
+function createDraftOrder(): DraftOrder {
+    return {
+        orderId: `order_ui_${Date.now()}`,
+        pickup: null,
+        dropoff: null,
+        payloadKg: 1,
+        priority: 'normal'
+    };
+}
 
 export default function GcsDashboard() {
     const socket = useSimulationSocket();
@@ -27,6 +43,12 @@ export default function GcsDashboard() {
     const [dynamicObstacles, setDynamicObstacles] = useState<DynamicObstacle[]>([]);
     const [layers, setLayers] = useState<LayerToggles>(DEFAULT_LAYER_TOGGLES);
     const [droneCount, setDroneCount] = useState(1);
+    const [activeSection, setActiveSection] = useState<ActiveDashboardSection>('overview');
+    const [draftOrder, setDraftOrder] = useState<DraftOrder>(createDraftOrder);
+    const [draftOrders, setDraftOrders] = useState<DraftOrder[]>([]);
+    const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
+    const [mapInteractionMode, setMapInteractionMode] = useState<MapInteractionMode>('none');
+    const [importError, setImportError] = useState<string | null>(null);
 
     useEffect(() => {
         fetch('/hanoi_buildings.geojson')
@@ -48,6 +70,22 @@ export default function GcsDashboard() {
     }, []);
 
     const handleMapClick = useCallback((latlng: LatLng) => {
+        if (mapInteractionMode === 'select_pickup') {
+            setDraftOrder(prev => ({ ...prev, pickup: latlng }));
+            addLocalEvent('info', 'PICKUP_SELECTED', 'Đã chọn điểm lấy hàng.');
+            setMapInteractionMode('none');
+            return;
+        }
+        if (mapInteractionMode === 'select_dropoff') {
+            setDraftOrder(prev => ({ ...prev, dropoff: latlng }));
+            addLocalEvent('info', 'DROPOFF_SELECTED', 'Đã chọn điểm giao hàng.');
+            setMapInteractionMode('none');
+            return;
+        }
+        if (mapInteractionMode === 'none') {
+            addLocalEvent('info', 'MAP_CLICK_IGNORED', 'Chọn công cụ trước khi click bản đồ.');
+            return;
+        }
         const obstacle = {
             pos: latlng,
             radius: obstacleConfig.radius,
@@ -57,18 +95,93 @@ export default function GcsDashboard() {
         if (socket.addObstacle(obstacle)) {
             setDynamicObstacles(prev => [...prev, obstacle]);
         }
-    }, [obstacleConfig, socket]);
+    }, [addLocalEvent, mapInteractionMode, obstacleConfig, socket]);
+
+    const handleDraftChange = useCallback(<K extends keyof DraftOrder,>(key: K, value: DraftOrder[K]) => {
+        setDraftOrder(prev => ({ ...prev, [key]: value }));
+    }, []);
+
+    const handleAddDraftOrder = useCallback(() => {
+        if (!draftOrder.orderId.trim() || !draftOrder.pickup || !draftOrder.dropoff || draftOrder.payloadKg <= 0) {
+            addLocalEvent('warning', 'ORDER_DRAFT_INVALID', 'Đơn nháp thiếu thông tin bắt buộc.');
+            return;
+        }
+        setDraftOrders(prev => [...prev.filter(order => order.orderId !== draftOrder.orderId), draftOrder]);
+        setDraftOrder(createDraftOrder());
+        addLocalEvent('info', 'ORDER_DRAFT_ADDED', 'Đã thêm đơn vào danh sách nháp.');
+    }, [addLocalEvent, draftOrder]);
+
+    const handleRemoveDraftOrder = useCallback((orderId: string) => {
+        setDraftOrders(prev => prev.filter(order => order.orderId !== orderId));
+    }, []);
+
+    const handleSubmitDraftOrders = useCallback(() => {
+        if (draftOrders.length === 0) return;
+        if (socket.submitOrderBatch(draftOrders)) {
+            setDraftOrders([]);
+            addLocalEvent('info', 'ORDER_BATCH_SUBMITTED', 'Đã gửi danh sách đơn hàng.');
+        }
+    }, [addLocalEvent, draftOrders, socket]);
+
+    const normalizePriority = useCallback((value: unknown): OrderPriority => {
+        return ['low', 'normal', 'high', 'urgent'].includes(String(value)) ? String(value) as OrderPriority : 'normal';
+    }, []);
+
+    const handleImportJson = useCallback((text: string) => {
+        try {
+            const parsed = JSON.parse(text);
+            const rows = Array.isArray(parsed) ? parsed : [parsed];
+            const imported = rows.map((item, idx) => {
+                const pickup = Array.isArray(item.pickup) && item.pickup.length === 2 ? [Number(item.pickup[0]), Number(item.pickup[1])] as LatLng : null;
+                const dropoff = Array.isArray(item.dropoff) && item.dropoff.length === 2 ? [Number(item.dropoff[0]), Number(item.dropoff[1])] as LatLng : null;
+                const payloadKg = Number(item.payloadKg ?? item.payload_kg ?? 0);
+                if (!pickup || !dropoff || !Number.isFinite(payloadKg) || payloadKg <= 0) {
+                    throw new Error(`Đơn thứ ${idx + 1} thiếu pickup/dropoff/payloadKg hợp lệ.`);
+                }
+                return {
+                    orderId: String(item.orderId ?? item.order_id ?? `order_ui_${Date.now()}_${idx}`),
+                    pickup,
+                    dropoff,
+                    payloadKg,
+                    priority: normalizePriority(item.priority),
+                    deadlineTs: item.deadlineTs ?? item.deadline_ts ?? null
+                };
+            });
+            setDraftOrders(prev => [...prev, ...imported]);
+            setImportError(null);
+            addLocalEvent('info', 'ORDER_JSON_IMPORTED', `Đã nạp ${imported.length} đơn vào danh sách nháp.`);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'JSON không hợp lệ.';
+            setImportError(message);
+            addLocalEvent('warning', 'ORDER_JSON_INVALID', message);
+        }
+    }, [addLocalEvent, normalizePriority]);
+
+    const handleDispatchOrders = useCallback(() => {
+        if (socket.dispatchOrders()) {
+            addLocalEvent('info', 'DISPATCH_REQUESTED', 'Đã yêu cầu tự động phân công.');
+        }
+    }, [addLocalEvent, socket]);
+
+    const handleSelectOrder = useCallback((orderId: string) => {
+        setSelectedOrderId(orderId);
+        setActiveSection('orders');
+    }, []);
 
     const handleReset = useCallback(() => {
         socket.resetSimulation();
         telemetryHistory.resetHistory();
         setDynamicObstacles([]);
+        setSelectedOrderId(null);
+        setMapInteractionMode('none');
     }, [socket, telemetryHistory]);
 
     const handleStop = useCallback(() => {
         socket.stopSimulation();
         telemetryHistory.resetHistory();
         setDynamicObstacles([]);
+        setSelectedOrderId(null);
+        setMapInteractionMode('none');
     }, [socket, telemetryHistory]);
 
     return (
@@ -97,9 +210,37 @@ export default function GcsDashboard() {
                 activeSimId={socket.activeSimId}
                 frontendId={socket.frontendId}
                 latencyMs={socket.latencyMs}
+                drones={socket.drones}
+                orders={socket.orders}
             />
-            <div className="flex min-h-0 flex-1">
-                <GcsSidebar
+            <div className="grid min-h-0 flex-1 grid-cols-[80px_minmax(0,1fr)_380px]">
+                <LeftNavigation activeSection={activeSection} onChange={setActiveSection} />
+                <div className="flex min-h-0 flex-col">
+                    <main className="min-h-0 flex-1">
+                        <UavMap
+                            buildings={buildings}
+                            mapConfig={socket.mapConfig}
+                            drones={socket.drones}
+                            orders={socket.orders}
+                            selectedOrderId={selectedOrderId}
+                            selectedDroneId={socket.selectedDroneId}
+                            plannedPaths={socket.plannedPaths}
+                            pathHistoryByDrone={telemetryHistory.pathHistoryByDrone}
+                            dynamicObstacles={dynamicObstacles}
+                            windShadowZones={socket.windShadowZones}
+                            layers={layers}
+                            windDir={weather.wind_dir}
+                            windSpeed={weather.wind_speed}
+                            mapInteractionMode={mapInteractionMode}
+                            onMapClick={handleMapClick}
+                            onSelectDrone={socket.setSelectedDroneId}
+                            onSelectOrder={handleSelectOrder}
+                        />
+                    </main>
+                    <BottomEventPanel events={socket.eventLogs} />
+                </div>
+                <RightDetailPanel
+                    activeSection={activeSection}
                     serverStatus={socket.serverStatus}
                     workerStatus={socket.workerStatus}
                     simulationStatus={socket.simulationStatus}
@@ -118,6 +259,13 @@ export default function GcsDashboard() {
                     batteryHistory={telemetryHistory.batteryHistory}
                     temperatureHistory={telemetryHistory.temperatureHistory}
                     altitudeHistory={telemetryHistory.altitudeHistory}
+                    orders={socket.orders}
+                    missions={socket.missions}
+                    draftOrder={draftOrder}
+                    draftOrders={draftOrders}
+                    selectedOrderId={selectedOrderId}
+                    mapInteractionMode={mapInteractionMode}
+                    importError={importError}
                     onStart={() => socket.startSimulation(droneCount)}
                     onDroneCountChange={setDroneCount}
                     onSelectDrone={socket.setSelectedDroneId}
@@ -129,24 +277,15 @@ export default function GcsDashboard() {
                     onApplyWeather={() => socket.applyWeather(weather)}
                     onObstacleChange={handleObstacleChange}
                     onLayerToggle={handleLayerToggle}
+                    onSelectOrder={handleSelectOrder}
+                    onDraftChange={handleDraftChange}
+                    onAddDraftOrder={handleAddDraftOrder}
+                    onRemoveDraftOrder={handleRemoveDraftOrder}
+                    onSubmitDraftOrders={handleSubmitDraftOrders}
+                    onImportJson={handleImportJson}
+                    onDispatchOrders={handleDispatchOrders}
+                    onSetMapInteractionMode={setMapInteractionMode}
                 />
-                <main className="min-w-0 flex-1">
-                    <UavMap
-                        buildings={buildings}
-                        mapConfig={socket.mapConfig}
-                        drones={socket.drones}
-                        selectedDroneId={socket.selectedDroneId}
-                        plannedPaths={socket.plannedPaths}
-                        pathHistoryByDrone={telemetryHistory.pathHistoryByDrone}
-                        dynamicObstacles={dynamicObstacles}
-                        windShadowZones={socket.windShadowZones}
-                        layers={layers}
-                        windDir={weather.wind_dir}
-                        windSpeed={weather.wind_speed}
-                        onMapClick={handleMapClick}
-                        onSelectDrone={socket.setSelectedDroneId}
-                    />
-                </main>
             </div>
         </div>
     );

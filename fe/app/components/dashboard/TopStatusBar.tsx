@@ -1,6 +1,7 @@
 'use client';
 
-import type { ServerStatus, SimulationStatus, WorkerStatus } from '../types/simulation';
+import { translateSimulationStatus, translateWorkerStatus } from '../utils/labels';
+import type { DronesById, OrdersById, ServerStatus, SimulationStatus, WorkerStatus } from '../types/simulation';
 
 type TopStatusBarProps = {
     serverStatus: ServerStatus;
@@ -9,14 +10,16 @@ type TopStatusBarProps = {
     activeSimId: string | null;
     frontendId: string | null;
     latencyMs: number | null;
+    drones: DronesById;
+    orders: OrdersById;
 };
 
-function StatusPill({ label, value }: { label: string; value: string }) {
-    const tone = value === 'connected' || value === 'idle' || value === 'running'
+function StatusPill({ label, value, toneValue = value }: { label: string; value: string; toneValue?: string }) {
+    const tone = toneValue === 'connected' || toneValue === 'idle' || toneValue === 'running'
         ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-        : value === 'paused' || value === 'busy'
+        : toneValue === 'paused' || toneValue === 'busy'
             ? 'border-amber-200 bg-amber-50 text-amber-700'
-            : value === 'failed' || value === 'error' || value === 'disconnected'
+            : toneValue === 'failed' || toneValue === 'error' || toneValue === 'disconnected'
                 ? 'border-red-200 bg-red-50 text-red-700'
                 : 'border-slate-200 bg-slate-50 text-slate-600';
 
@@ -34,21 +37,29 @@ export default function TopStatusBar({
     simulationStatus,
     activeSimId,
     frontendId,
-    latencyMs
+    latencyMs,
+    drones,
+    orders
 }: TopStatusBarProps) {
+    const orderRows = Object.values(orders);
+    const activeOrders = orderRows.filter(order => !['completed', 'failed', 'canceled'].includes(order.status)).length;
+    const completedOrders = orderRows.filter(order => order.status === 'completed').length;
+
     return (
-        <div className="flex min-h-14 items-center justify-between border-b border-slate-200 bg-white px-4">
+        <div className="flex min-h-16 items-center justify-between gap-4 border-b border-slate-200 bg-white px-4">
             <div>
-                <h1 className="text-sm font-bold text-slate-800">UAV Ground Control Station</h1>
-                <p className="text-xs font-medium text-slate-500">Live simulation broker dashboard</p>
+                <h1 className="text-base font-bold text-slate-800">Trạm điều phối UAV</h1>
+                <p className="text-xs font-medium text-slate-500">Mô phỏng giao hàng UAV thời gian thực</p>
             </div>
             <div className="flex flex-wrap items-center justify-end gap-2">
-                <StatusPill label="Server" value={serverStatus} />
-                <StatusPill label="Worker" value={workerStatus} />
-                <StatusPill label="Sim" value={simulationStatus} />
-                <StatusPill label="Ping" value={latencyMs !== null ? `${latencyMs}ms` : '-'} />
-                <StatusPill label="Sim ID" value={activeSimId ?? '-'} />
-                <StatusPill label="FE" value={frontendId ?? '-'} />
+                <StatusPill label="Máy chủ" value={serverStatus === 'connected' ? 'Đã kết nối' : serverStatus} toneValue={serverStatus} />
+                <StatusPill label="Worker" value={translateWorkerStatus(workerStatus)} toneValue={workerStatus} />
+                <StatusPill label="Mô phỏng" value={translateSimulationStatus(simulationStatus)} toneValue={simulationStatus} />
+                <StatusPill label="UAV" value={String(Object.keys(drones).length)} />
+                <StatusPill label="Đơn" value={`${orderRows.length}/${activeOrders}/${completedOrders}`} />
+                <StatusPill label="Độ trễ" value={latencyMs !== null ? `${latencyMs}ms` : '-'} />
+                <StatusPill label="Phiên" value={activeSimId ?? '-'} />
+                <StatusPill label="Giao diện" value={frontendId ?? '-'} />
             </div>
         </div>
     );

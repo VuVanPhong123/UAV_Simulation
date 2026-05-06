@@ -4,6 +4,7 @@ import type { EventLogEntry } from '../types/simulation';
 
 type EventLogPanelProps = {
     events: EventLogEntry[];
+    limit?: number;
 };
 
 function levelClass(level: string) {
@@ -13,12 +14,12 @@ function levelClass(level: string) {
     return 'text-blue-600';
 }
 
-export default function EventLogPanel({ events }: EventLogPanelProps) {
+export default function EventLogPanel({ events, limit = 20 }: EventLogPanelProps) {
     return (
         <section className="min-h-0 rounded border border-slate-200 bg-white p-3">
-            <h2 className="border-b border-slate-100 pb-2 text-xs font-bold uppercase text-slate-500">Event Log</h2>
+            <h2 className="border-b border-slate-100 pb-2 text-xs font-bold uppercase text-slate-500">Nhật ký sự kiện</h2>
             <div className="mt-2 flex max-h-64 flex-col gap-2 overflow-y-auto">
-                {events.slice(0, 20).map((log, idx) => (
+                {events.slice(0, limit).map((log, idx) => (
                     <div key={`${log.timestamp ?? 'event'}-${idx}`} className="rounded border border-slate-100 bg-slate-50 p-2 text-xs leading-snug">
                         <div className="flex items-center justify-between gap-2">
                             <span className={`font-bold uppercase ${levelClass(log.level)}`}>{log.level}</span>
@@ -27,7 +28,7 @@ export default function EventLogPanel({ events }: EventLogPanelProps) {
                         <p className="mt-1 text-slate-700">{log.message}</p>
                     </div>
                 ))}
-                {events.length === 0 && <p className="italic text-slate-400 text-sm">No events yet.</p>}
+                {events.length === 0 && <p className="italic text-slate-400 text-sm">Chưa có sự kiện.</p>}
             </div>
         </section>
     );

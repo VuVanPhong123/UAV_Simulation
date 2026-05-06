@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { Fragment, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 import type { Feature, GeoJsonObject, GeoJsonProperties, Geometry } from 'geojson';
 import type { Layer } from 'leaflet';
@@ -12,10 +12,13 @@ import type {
     DynamicObstacle,
     LatLng,
     LayerToggles,
+    MapInteractionMode,
     MapConfig,
+    OrdersById,
     PathHistoryByDrone,
     PlannedPathsByDrone
 } from '../types/simulation';
+import { orderIdOf, translateOrderStatus } from '../utils/labels';
 
 const MapContainer = dynamic(() => import('react-leaflet').then(mod => mod.MapContainer), { ssr: false });
 const TileLayer = dynamic(() => import('react-leaflet').then(mod => mod.TileLayer), { ssr: false });
@@ -29,6 +32,8 @@ type UavMapProps = {
     buildings: GeoJsonObject | null;
     mapConfig: MapConfig | null;
     drones: DronesById;
+    orders: OrdersById;
+    selectedOrderId: string | null;
     selectedDroneId: string | null;
     plannedPaths: PlannedPathsByDrone;
     pathHistoryByDrone: PathHistoryByDrone;
@@ -37,8 +42,10 @@ type UavMapProps = {
     layers: LayerToggles;
     windDir: number;
     windSpeed: number;
+    mapInteractionMode: MapInteractionMode;
     onMapClick: (latlng: LatLng) => void;
     onSelectDrone: (droneId: string) => void;
+    onSelectOrder?: (orderId: string) => void;
 };
 
 function droneColors(status?: string) {
@@ -56,6 +63,8 @@ export default function UavMap({
     buildings,
     mapConfig,
     drones,
+    orders,
+    selectedOrderId,
     selectedDroneId,
     plannedPaths,
     pathHistoryByDrone,
@@ -64,8 +73,10 @@ export default function UavMap({
     layers,
     windDir,
     windSpeed,
+    mapInteractionMode,
     onMapClick,
-    onSelectDrone
+    onSelectDrone,
+    onSelectOrder
 }: UavMapProps) {
     const defaultCenter: LatLng = [21.0285, 105.8542];
     const mapCenter = mapConfig ? mapConfig.start : defaultCenter;
@@ -78,10 +89,22 @@ export default function UavMap({
     }, [layers.windShadow, windShadowZones]);
     const selectedPlannedPath = selectedDroneId ? plannedPaths[selectedDroneId] ?? [] : [];
     const selectedPathHistory = selectedDroneId ? pathHistoryByDrone[selectedDroneId] ?? [] : [];
+    const interactionText = mapInteractionMode === 'select_pickup'
+        ? 'Đang chọn điểm lấy hàng trên bản đồ'
+        : mapInteractionMode === 'select_dropoff'
+            ? 'Đang chọn điểm giao hàng trên bản đồ'
+            : mapInteractionMode === 'obstacle'
+                ? 'Đang đặt vật cản'
+                : null;
 
     return (
         <div className="relative h-full w-full overflow-hidden bg-slate-100">
             {layers.weatherOverlay && <WindOverlay windDir={windDir} windSpeed={windSpeed} />}
+            {interactionText && (
+                <div className="absolute left-4 top-4 z-[500] rounded border border-blue-200 bg-white px-3 py-2 text-xs font-bold text-blue-700 shadow-sm">
+                    {interactionText}
+                </div>
+            )}
             <MapContainer center={mapCenter} zoom={17} preferCanvas={true} className="h-full w-full z-10">
                 <MapEvents onMapClick={onMapClick} />
                 <TileLayer url="https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png" />
@@ -162,6 +185,40 @@ export default function UavMap({
                         <Circle key={`dyn-obs-${idx}`} center={pos} radius={radius} pathOptions={{ color: '#f97316', fillColor: '#f97316', fillOpacity: 0.35 }}>
                             <Tooltip>{height !== undefined ? `${obstacleType} / h ${height}m / r ${radius}m` : 'obstacle'}</Tooltip>
                         </Circle>
+                    );
+                })}
+
+                {layers.orders && Object.values(orders).map(order => {
+                    const orderId = orderIdOf(order);
+                    const pickup = order.pickup;
+                    const dropoff = order.dropoff;
+                    const selected = selectedOrderId === orderId;
+                    const completed = ['completed', 'failed', 'canceled'].includes(order.status);
+                    const pickupColor = completed ? '#64748b' : '#0ea5e9';
+                    const dropoffColor = completed ? '#64748b' : '#f97316';
+                    return (
+                        <Fragment key={`order-${orderId}`}>
+                            {Array.isArray(pickup) && pickup.length === 2 && (
+                                <CircleMarker
+                                    center={pickup}
+                                    radius={selected ? 8 : 5}
+                                    eventHandlers={{ click: () => onSelectOrder?.(orderId) }}
+                                    pathOptions={{ color: pickupColor, fillColor: pickupColor, fillOpacity: selected ? 1 : 0.75, weight: selected ? 4 : 2 }}
+                                >
+                                    <Tooltip permanent={selected} direction="top">Lấy hàng: {orderId} / {translateOrderStatus(order.status)}</Tooltip>
+                                </CircleMarker>
+                            )}
+                            {Array.isArray(dropoff) && dropoff.length === 2 && (
+                                <CircleMarker
+                                    center={dropoff}
+                                    radius={selected ? 8 : 5}
+                                    eventHandlers={{ click: () => onSelectOrder?.(orderId) }}
+                                    pathOptions={{ color: dropoffColor, fillColor: dropoffColor, fillOpacity: selected ? 1 : 0.75, weight: selected ? 4 : 2 }}
+                                >
+                                    <Tooltip permanent={selected} direction="bottom">Giao hàng: {orderId} / {translateOrderStatus(order.status)}</Tooltip>
+                                </CircleMarker>
+                            )}
+                        </Fragment>
                     );
                 })}
 

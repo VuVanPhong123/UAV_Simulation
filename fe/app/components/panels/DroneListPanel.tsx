@@ -1,6 +1,7 @@
 'use client';
 
 import type { DronesById } from '../types/simulation';
+import { translateDroneStatus } from '../utils/labels';
 
 type DroneListPanelProps = {
     drones: DronesById;
@@ -13,7 +14,7 @@ export default function DroneListPanel({ drones, selectedDroneId, onSelect }: Dr
 
     return (
         <section className="rounded border border-slate-200 bg-white p-3">
-            <h2 className="border-b border-slate-100 pb-2 text-xs font-bold uppercase text-slate-500">Drones</h2>
+            <h2 className="border-b border-slate-100 pb-2 text-xs font-bold uppercase text-slate-500">Đội UAV</h2>
             <div className="mt-2 space-y-2">
                 {rows.map(drone => {
                     const droneId = drone.droneId ?? 'drone_1';
@@ -31,7 +32,7 @@ export default function DroneListPanel({ drones, selectedDroneId, onSelect }: Dr
                         >
                             <div className="flex items-center justify-between gap-2">
                                 <span className="font-mono text-xs font-bold text-slate-800">{droneId}</span>
-                                <span className="text-[10px] font-bold uppercase text-slate-500">{drone.status ?? '--'}</span>
+                                <span className="text-[10px] font-bold uppercase text-slate-500">{translateDroneStatus(drone.status)}</span>
                             </div>
                             <div className="mt-1 grid grid-cols-2 gap-2 font-mono text-[11px] font-bold text-slate-600">
                                 <span>{typeof battery === 'number' ? `${battery.toFixed(1)}%` : '--'}</span>
@@ -40,7 +41,7 @@ export default function DroneListPanel({ drones, selectedDroneId, onSelect }: Dr
                         </button>
                     );
                 })}
-                {rows.length === 0 && <p className="text-sm italic text-slate-400">Waiting for drone telemetry.</p>}
+                {rows.length === 0 && <p className="text-sm italic text-slate-400">Đang chờ telemetry UAV.</p>}
             </div>
         </section>
     );

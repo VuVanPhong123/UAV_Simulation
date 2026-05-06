@@ -62,6 +62,10 @@ export type PlannedPathsByDrone = Record<string, LatLng[]>;
 export type PlannedPath3dByDrone = Record<string, PlannedPath3DPoint[]>;
 export type PathHistoryByDrone = Record<string, LatLng[]>;
 
+export type ActiveDashboardSection = 'overview' | 'orders' | 'drones' | 'environment' | 'map_tools' | 'events';
+export type MapInteractionMode = 'none' | 'obstacle' | 'select_pickup' | 'select_dropoff';
+export type OrderPriority = 'low' | 'normal' | 'high' | 'urgent';
+
 export type WeatherState = {
     wind_dir: number;
     wind_speed: number;
@@ -91,6 +95,15 @@ export type OrderStatus =
     | 'completed'
     | 'failed'
     | 'canceled';
+
+export type DraftOrder = {
+    orderId: string;
+    pickup: LatLng | null;
+    dropoff: LatLng | null;
+    payloadKg: number;
+    priority: OrderPriority;
+    deadlineTs?: number | null;
+};
 
 export type MissionStatus =
     | 'planned'
@@ -175,6 +188,7 @@ export type LayerToggles = {
     plannedPath: boolean;
     pathHistory: boolean;
     dynamicObstacles: boolean;
+    orders: boolean;
     windShadow: boolean;
     sensorRange: boolean;
     weatherOverlay: boolean;
@@ -222,6 +236,7 @@ export const DEFAULT_LAYER_TOGGLES: LayerToggles = {
     plannedPath: true,
     pathHistory: true,
     dynamicObstacles: true,
+    orders: true,
     windShadow: false,
     sensorRange: true,
     weatherOverlay: false
