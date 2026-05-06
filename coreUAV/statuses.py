@@ -13,6 +13,26 @@ class DroneStatus(str, Enum):
     EMERGENCY_LANDING = "emergency_landing"
 
 
+class OrderStatus(str, Enum):
+    PENDING = "pending"
+    ASSIGNED = "assigned"
+    GOING_TO_PICKUP = "going_to_pickup"
+    PICKED_UP = "picked_up"
+    DELIVERING = "delivering"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELED = "canceled"
+
+
+class MissionStatus(str, Enum):
+    PLANNED = "planned"
+    TO_PICKUP = "to_pickup"
+    PICKUP_ARRIVED = "pickup_arrived"
+    TO_DROPOFF = "to_dropoff"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 class EventLevel(str, Enum):
     INFO = "info"
     WARNING = "warning"
@@ -35,4 +55,13 @@ class EventCode(str, Enum):
     SIMULATION_RESUMED = "SIMULATION_RESUMED"
     SIMULATION_STOPPED = "SIMULATION_STOPPED"
     DRONE_PROXIMITY_WARNING = "DRONE_PROXIMITY_WARNING"
+    ORDER_BATCH_RECEIVED = "ORDER_BATCH_RECEIVED"
+    ORDER_ACCEPTED = "ORDER_ACCEPTED"
+    ORDER_REJECTED = "ORDER_REJECTED"
+    ORDER_STATE_UPDATED = "ORDER_STATE_UPDATED"
+    MISSION_CREATED = "MISSION_CREATED"
+    DISPATCH_STARTED = "DISPATCH_STARTED"
+    DISPATCH_ASSIGNED = "DISPATCH_ASSIGNED"
+    DISPATCH_NO_DRONE_AVAILABLE = "DISPATCH_NO_DRONE_AVAILABLE"
+    DISPATCH_FAILED = "DISPATCH_FAILED"
     WORKER_ERROR = "WORKER_ERROR"

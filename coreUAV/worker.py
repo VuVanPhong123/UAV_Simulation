@@ -255,6 +255,35 @@ def main():
             }
         }))
 
+    def send_order_update(order_dict):
+        ws.send(json.dumps({
+            "type": "order_update",
+            "simId": current_sim_id(),
+            "droneId": SYSTEM_DRONE_ID,
+            "timestamp": now_ms(),
+            "payload": order_dict
+        }))
+
+    def send_order_state():
+        if world is None:
+            return
+        ws.send(json.dumps({
+            "type": "order_state",
+            "simId": current_sim_id(),
+            "droneId": SYSTEM_DRONE_ID,
+            "timestamp": now_ms(),
+            "payload": world.get_order_state()
+        }))
+
+    def send_mission_update(mission_dict):
+        ws.send(json.dumps({
+            "type": "mission_update",
+            "simId": current_sim_id(),
+            "droneId": SYSTEM_DRONE_ID,
+            "timestamp": now_ms(),
+            "payload": mission_dict
+        }))
+
     def drain_world_events():
         if world is None:
             return
@@ -275,6 +304,30 @@ def main():
             agent.drone_id: id(agent.path)
             for agent in world.get_agents()
         }
+
+    def process_order_batch(batch):
+        auto_dispatch = True
+        if isinstance(batch, dict) and "autoDispatch" in batch:
+            auto_dispatch = parse_bool(batch.get("autoDispatch"))
+        elif isinstance(batch, dict) and "auto_dispatch" in batch:
+            auto_dispatch = parse_bool(batch.get("auto_dispatch"))
+
+        updates = world.receive_order_batch(batch, auto_dispatch=auto_dispatch)
+        for order_dict in updates.get("orders", []):
+            send_order_update(order_dict)
+        for mission_dict in updates.get("missions", []):
+            send_mission_update(mission_dict)
+        send_order_state()
+        drain_world_events()
+
+    def process_dispatch_orders():
+        updates = world.dispatch_pending_orders()
+        for order_dict in updates.get("orders", []):
+            send_order_update(order_dict)
+        for mission_dict in updates.get("missions", []):
+            send_mission_update(mission_dict)
+        send_order_state()
+        drain_world_events()
 
     print("\nWorker DA SAN SANG, dang cho start_simulation...\n")
 
@@ -308,6 +361,14 @@ def main():
                 last_path_ids = mark_current_paths()
 
                 send_config()
+                startup_order_batch = payload.get("orderBatch", payload.get("order_batch"))
+                if startup_order_batch is not None:
+                    if "autoDispatch" in payload or "auto_dispatch" in payload:
+                        startup_order_batch = {
+                            "orders": startup_order_batch,
+                            "autoDispatch": payload.get("autoDispatch", payload.get("auto_dispatch"))
+                        }
+                    process_order_batch(startup_order_batch)
                 send_all_telemetry()
                 if send_wind_shadow_by_default:
                     send_wind_shadow_zones()
@@ -366,6 +427,21 @@ def main():
                 if not is_assigned or reject_wrong_sim(data):
                     continue
                 send_wind_shadow_zones()
+
+            elif msg_type == "order_batch":
+                if not is_assigned or reject_wrong_sim(data):
+                    continue
+                payload = data.get("payload") or {}
+                if "orders" in payload or "autoDispatch" in payload or "auto_dispatch" in payload:
+                    batch = payload
+                else:
+                    batch = payload.get("orderBatch") or payload
+                process_order_batch(batch)
+
+            elif msg_type == "dispatch_orders":
+                if not is_assigned or reject_wrong_sim(data):
+                    continue
+                process_dispatch_orders()
 
             elif msg_type == "command":
                 if not is_assigned or reject_wrong_sim(data):

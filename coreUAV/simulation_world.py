@@ -1,11 +1,15 @@
 from dataclasses import dataclass, field
+import math
+import time
 
 import numpy as np
 
+from dispatch_engine import dispatch_score
 from drone import Drone
 from energy_model import rain_factor
 from graph_map import WaypointGraph, path_point_altitude, path_point_node
-from statuses import DroneStatus, EventCode, EventLevel
+from order_models import DeliveryOrder, Mission, serialize_mission, serialize_order
+from statuses import DroneStatus, EventCode, EventLevel, MissionStatus, OrderStatus
 
 
 TERMINAL_STATUSES = {
@@ -35,6 +39,9 @@ class DroneAgent:
     num_replans: int = 0
     num_charging_stops: int = 0
     last_event_step: int = 0
+    current_order_id: str | None = None
+    current_mission_id: str | None = None
+    available: bool = True
 
 
 class SimulationWorld:
@@ -58,6 +65,10 @@ class SimulationWorld:
         self.proximity_cooldowns = {}
         self.drone_count = max(1, min(5, int(drone_count or 1)))
         self.agents = {}
+        self.orders = {}
+        self.missions = {}
+        self.order_seq = 1
+        self.mission_seq = 1
         self.reset(self.drone_count)
 
     def reset(self, drone_count=None):
@@ -67,6 +78,10 @@ class SimulationWorld:
         self.pending_events = []
         self.obstacles = []
         self.proximity_cooldowns = {}
+        self.orders = {}
+        self.missions = {}
+        self.order_seq = 1
+        self.mission_seq = 1
         self.graph.clear_dynamic_obstacles()
         self.agents = {}
 
@@ -89,9 +104,316 @@ class SimulationWorld:
                 goal_node=goal_node,
                 current_target_node=goal_node,
                 current_target_altitude=drone.normal_altitude,
+                current_order_id=None,
+                current_mission_id=None,
+                available=True,
             )
             self.agents[drone_id] = agent
             self._replan_agent(agent, EventCode.PATH_PLANNED.value, "Initial path planned.")
+
+    def _now_ms(self):
+        return int(time.time() * 1000)
+
+    def _next_order_id(self):
+        while True:
+            order_id = f"order_{self.order_seq}"
+            self.order_seq += 1
+            if order_id not in self.orders:
+                return order_id
+
+    def _is_finite_number(self, value):
+        return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value))
+
+    def _validate_latlng_node(self, value, field_name, altitude, errors):
+        if not isinstance(value, (list, tuple)) or len(value) != 2:
+            errors.append(f"{field_name} must be a [lat, lon] pair.")
+            return None
+        if not self._is_finite_number(value[0]) or not self._is_finite_number(value[1]):
+            errors.append(f"{field_name} must contain finite numeric lat/lon values.")
+            return None
+        try:
+            node = self.graph.latlng_to_node(value)
+        except Exception as exc:
+            errors.append(f"{field_name} could not be mapped to graph: {exc}")
+            return None
+        if not self.graph.is_node_clear_at_altitude(node, altitude):
+            errors.append(f"{field_name} maps to blocked node {node} at altitude {altitude}.")
+            return node
+        return node
+
+    def _normalize_order_payloads(self, orders_payload):
+        if isinstance(orders_payload, dict) and isinstance(orders_payload.get("orders"), list):
+            return orders_payload["orders"]
+        if isinstance(orders_payload, list):
+            return orders_payload
+        if isinstance(orders_payload, dict) and ("pickup" in orders_payload or "dropoff" in orders_payload):
+            return [orders_payload]
+        return [{
+            "orderId": self._next_order_id(),
+            "_batch_error": "order batch must be a list or an object with an orders list."
+        }]
+
+    def get_available_agents(self):
+        available_statuses = {
+            DroneStatus.IDLE.value,
+            DroneStatus.PLANNING.value,
+            DroneStatus.FLYING.value,
+            DroneStatus.SUCCESS.value,
+        }
+        return [
+            agent for agent in self.get_agents()
+            if agent.available
+            and agent.current_mission_id is None
+            and agent.drone.status in available_statuses
+        ]
+
+    def _estimate_path_cost_between(self, start_node, goal_node, altitude):
+        path = self.graph.a_star_2_5d(
+            start_node,
+            goal_node,
+            current_altitude=altitude,
+            wind_dir=self.wind_dir,
+            wind_speed=self.wind_speed,
+            ambient_temp=self.ambient_temp,
+            is_raining=self.is_raining,
+        )
+        if not path:
+            return None, float("inf")
+        cost = self.graph.estimate_path_cost(
+            path,
+            altitude,
+            self.wind_dir,
+            self.wind_speed,
+            self.ambient_temp,
+            self.is_raining,
+        )
+        return path, cost
+
+    def _next_mission_id(self):
+        while True:
+            mission_id = f"mission_{self.mission_seq}"
+            self.mission_seq += 1
+            if mission_id not in self.missions:
+                return mission_id
+
+    def dispatch_pending_orders(self):
+        changed_orders = []
+        changed_missions = []
+        assigned_count = 0
+        pending_orders = [
+            order for order in self.orders.values()
+            if order.status == OrderStatus.PENDING.value and not order.validation_errors
+        ]
+        max_payload_kg = float(self.config.get("drone", {}).get("max_payload_kg", 5.0))
+
+        self.queue_event(
+            "system",
+            EventLevel.INFO.value,
+            EventCode.DISPATCH_STARTED.value,
+            f"Dispatch started for {len(pending_orders)} pending order(s).",
+        )
+
+        for order in pending_orders:
+            best_candidate = None
+            for agent in self.get_available_agents():
+                if order.payload_kg > max_payload_kg:
+                    continue
+                if agent.drone.battery < agent.drone.low_threshold:
+                    continue
+
+                altitude = float(agent.drone.altitude or self.config.get("drone", {}).get("normal_altitude", 20.0))
+                _, cost_to_pickup = self._estimate_path_cost_between(agent.drone.node, order.pickup_node, altitude)
+                if not np.isfinite(cost_to_pickup):
+                    continue
+                _, cost_delivery = self._estimate_path_cost_between(order.pickup_node, order.dropoff_node, altitude)
+                if not np.isfinite(cost_delivery):
+                    continue
+
+                score = dispatch_score(
+                    cost_to_pickup,
+                    cost_delivery,
+                    order.payload_kg,
+                    order.priority,
+                    agent.drone.battery,
+                    agent.drone.low_threshold,
+                )
+                if not np.isfinite(score):
+                    continue
+                if best_candidate is None or score < best_candidate["score"]:
+                    best_candidate = {
+                        "agent": agent,
+                        "score": score,
+                    }
+
+            if best_candidate is None:
+                self.queue_event(
+                    "system",
+                    EventLevel.WARNING.value,
+                    EventCode.DISPATCH_NO_DRONE_AVAILABLE.value,
+                    f"No available drone for order {order.order_id}.",
+                )
+                continue
+
+            now = self._now_ms()
+            agent = best_candidate["agent"]
+            mission_id = self._next_mission_id()
+            mission = Mission(
+                mission_id=mission_id,
+                order_id=order.order_id,
+                drone_id=agent.drone_id,
+                pickup_node=order.pickup_node,
+                dropoff_node=order.dropoff_node,
+                status=MissionStatus.PLANNED.value,
+                created_at=now,
+                updated_at=now,
+            )
+            self.missions[mission_id] = mission
+
+            order.status = OrderStatus.ASSIGNED.value
+            order.assigned_drone_id = agent.drone_id
+            order.mission_id = mission_id
+            order.updated_at = now
+
+            agent.current_order_id = order.order_id
+            agent.current_mission_id = mission_id
+            agent.available = False
+
+            assigned_count += 1
+            changed_orders.append(serialize_order(order))
+            changed_missions.append(serialize_mission(mission))
+            self.queue_event(
+                agent.drone_id,
+                EventLevel.INFO.value,
+                EventCode.DISPATCH_ASSIGNED.value,
+                f"Order {order.order_id} assigned to {agent.drone_id} as {mission_id}.",
+            )
+            self.queue_event(
+                agent.drone_id,
+                EventLevel.INFO.value,
+                EventCode.MISSION_CREATED.value,
+                f"Mission {mission_id} created for order {order.order_id}.",
+            )
+
+        return {
+            "orders": changed_orders,
+            "missions": changed_missions,
+            "assignedCount": assigned_count,
+        }
+
+    def receive_order_batch(self, orders_payload, auto_dispatch=True):
+        raw_orders = self._normalize_order_payloads(orders_payload)
+        accepted = []
+        now = self._now_ms()
+        normal_altitude = float(self.config.get("drone", {}).get("normal_altitude", 20.0))
+        max_payload_kg = float(self.config.get("drone", {}).get("max_payload_kg", 5.0))
+
+        self.queue_event(
+            "system",
+            EventLevel.INFO.value,
+            EventCode.ORDER_BATCH_RECEIVED.value,
+            f"Order batch received: {len(raw_orders)} order(s).",
+        )
+
+        for raw in raw_orders:
+            errors = []
+            if not isinstance(raw, dict):
+                raw = {"orderId": self._next_order_id(), "_batch_error": "order payload must be an object."}
+
+            order_id = raw.get("orderId") or raw.get("order_id") or self._next_order_id()
+            pickup = raw.get("pickup")
+            dropoff = raw.get("dropoff")
+            payload_value = raw.get("payloadKg", raw.get("payload_kg"))
+            priority = str(raw.get("priority", "normal") or "normal")
+            deadline_ts = raw.get("deadlineTs", raw.get("deadline_ts"))
+
+            if raw.get("_batch_error"):
+                errors.append(raw["_batch_error"])
+            if pickup is None:
+                errors.append("pickup is required.")
+            if dropoff is None:
+                errors.append("dropoff is required.")
+            if payload_value is None:
+                errors.append("payloadKg is required.")
+
+            payload_kg = 0.0
+            if payload_value is not None:
+                if self._is_finite_number(payload_value):
+                    payload_kg = float(payload_value)
+                    if payload_kg <= 0:
+                        errors.append("payloadKg must be greater than 0.")
+                    elif payload_kg > max_payload_kg:
+                        errors.append(f"payloadKg must be <= {max_payload_kg}.")
+                else:
+                    errors.append("payloadKg must be a finite number.")
+
+            normalized_deadline = None
+            if deadline_ts is not None:
+                if self._is_finite_number(deadline_ts):
+                    normalized_deadline = int(deadline_ts)
+                else:
+                    errors.append("deadlineTs must be a finite number when provided.")
+
+            pickup_node = self._validate_latlng_node(pickup, "pickup", normal_altitude, errors) if pickup is not None else None
+            dropoff_node = self._validate_latlng_node(dropoff, "dropoff", normal_altitude, errors) if dropoff is not None else None
+
+            status = OrderStatus.FAILED.value if errors else OrderStatus.PENDING.value
+            order = DeliveryOrder(
+                order_id=str(order_id),
+                pickup=list(pickup) if isinstance(pickup, (list, tuple)) else [],
+                dropoff=list(dropoff) if isinstance(dropoff, (list, tuple)) else [],
+                payload_kg=payload_kg,
+                priority=priority,
+                deadline_ts=normalized_deadline,
+                status=status,
+                pickup_node=pickup_node,
+                dropoff_node=dropoff_node,
+                validation_errors=errors,
+                created_at=now,
+                updated_at=now,
+            )
+            self.orders[order.order_id] = order
+
+            if errors:
+                self.queue_event(
+                    order.order_id,
+                    EventLevel.WARNING.value,
+                    EventCode.ORDER_REJECTED.value,
+                    f"Order {order.order_id} rejected: {'; '.join(errors)}",
+                )
+            else:
+                self.queue_event(
+                    order.order_id,
+                    EventLevel.INFO.value,
+                    EventCode.ORDER_ACCEPTED.value,
+                    f"Order {order.order_id} accepted.",
+                )
+            accepted.append(serialize_order(order))
+
+        dispatch_result = {
+            "orders": [],
+            "missions": [],
+            "assignedCount": 0,
+        }
+        if auto_dispatch:
+            dispatch_result = self.dispatch_pending_orders()
+
+        self.queue_event(
+            "system",
+            EventLevel.INFO.value,
+            EventCode.ORDER_STATE_UPDATED.value,
+            f"Order state updated: {len(self.orders)} stored order(s).",
+        )
+        return {
+            "orders": accepted + dispatch_result["orders"],
+            "missions": dispatch_result["missions"],
+            "assignedCount": dispatch_result["assignedCount"],
+        }
+
+    def get_order_state(self):
+        return {
+            "orders": [serialize_order(order) for order in self.orders.values()],
+            "missions": [serialize_mission(mission) for mission in self.missions.values()],
+        }
 
     def _find_nearby_clear_node(self, base_node, offset_index, altitude):
         offsets = [

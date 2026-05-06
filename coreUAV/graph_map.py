@@ -262,6 +262,15 @@ class WaypointGraph:
         j = max(0, min(self.rows - 1, j))
         return (i, j)
 
+    def latlng_to_node(self, latlng):
+        if not isinstance(latlng, (list, tuple)) or len(latlng) != 2:
+            raise ValueError("latlng must be a [lat, lon] pair")
+        lat = float(latlng[0])
+        lon = float(latlng[1])
+        if not np.isfinite(lat) or not np.isfinite(lon):
+            raise ValueError("latlng values must be finite numbers")
+        return self._get_nearest_node([lat, lon])
+
     def heuristic(self, a, b):
         return np.hypot(a[0]-b[0], a[1]-b[1]) * self.resolution
 

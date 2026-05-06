@@ -78,6 +78,77 @@ export type DynamicObstacle = LatLng | {
     obstacleType: ObstacleType;
 };
 
+export type OrderStatus =
+    | 'pending'
+    | 'assigned'
+    | 'going_to_pickup'
+    | 'picked_up'
+    | 'delivering'
+    | 'completed'
+    | 'failed'
+    | 'canceled';
+
+export type MissionStatus =
+    | 'planned'
+    | 'to_pickup'
+    | 'pickup_arrived'
+    | 'to_dropoff'
+    | 'completed'
+    | 'failed';
+
+export type DeliveryOrder = {
+    orderId?: string;
+    order_id?: string;
+    pickup: LatLng;
+    dropoff: LatLng;
+    payloadKg?: number;
+    payload_kg?: number;
+    priority?: string;
+    deadlineTs?: number | null;
+    deadline_ts?: number | null;
+    status: OrderStatus;
+    pickupNode?: [number, number] | null;
+    pickup_node?: [number, number] | null;
+    dropoffNode?: [number, number] | null;
+    dropoff_node?: [number, number] | null;
+    assignedDroneId?: string | null;
+    assigned_drone_id?: string | null;
+    missionId?: string | null;
+    mission_id?: string | null;
+    validationErrors?: string[];
+    validation_errors?: string[];
+    createdAt?: number;
+    created_at?: number;
+    updatedAt?: number;
+    updated_at?: number;
+};
+
+export type Mission = {
+    missionId?: string;
+    mission_id?: string;
+    orderId?: string;
+    order_id?: string;
+    droneId?: string | null;
+    drone_id?: string | null;
+    pickupNode?: [number, number] | null;
+    pickup_node?: [number, number] | null;
+    dropoffNode?: [number, number] | null;
+    dropoff_node?: [number, number] | null;
+    status: MissionStatus;
+    createdAt?: number;
+    created_at?: number;
+    updatedAt?: number;
+    updated_at?: number;
+};
+
+export type OrdersById = Record<string, DeliveryOrder>;
+export type MissionsById = Record<string, Mission>;
+
+export type OrderStatePayload = {
+    orders?: DeliveryOrder[];
+    missions?: Mission[];
+};
+
 export type LayerToggles = {
     buildings: boolean;
     buildingLabels: boolean;
@@ -105,7 +176,11 @@ export type IncomingMessage = {
     status?: string;
     message?: string;
     latencyMs?: number;
-    payload?: DroneTelemetry & {
+    payload?: Partial<DroneTelemetry>
+    & Partial<Omit<DeliveryOrder, 'status'>>
+    & Partial<Omit<Mission, 'status'>>
+    & OrderStatePayload
+    & {
         droneId?: string;
         zones?: LatLng[];
         path?: LatLng[];

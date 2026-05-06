@@ -5,10 +5,14 @@ import type {
     DroneTelemetry,
     DynamicObstacle,
     DronesById,
+    DeliveryOrder,
     EventLogEntry,
     IncomingMessage,
     LatLng,
     MapConfig,
+    Mission,
+    MissionsById,
+    OrdersById,
     PlannedPath3DPoint,
     PlannedPath3dByDrone,
     PlannedPathsByDrone,
@@ -23,6 +27,30 @@ function terminalToStatus(status?: string): SimulationStatus {
     if (status === 'paused') return 'paused';
     if (status === 'failed' || status === 'truncated') return 'failed';
     return 'running';
+}
+
+function orderKey(order: DeliveryOrder) {
+    return order.orderId ?? order.order_id ?? '';
+}
+
+function missionKey(mission: Mission) {
+    return mission.missionId ?? mission.mission_id ?? '';
+}
+
+function mapOrders(items?: DeliveryOrder[]) {
+    return (items ?? []).reduce<OrdersById>((acc, order) => {
+        const key = orderKey(order);
+        if (key) acc[key] = order;
+        return acc;
+    }, {});
+}
+
+function mapMissions(items?: Mission[]) {
+    return (items ?? []).reduce<MissionsById>((acc, mission) => {
+        const key = missionKey(mission);
+        if (key) acc[key] = mission;
+        return acc;
+    }, {});
 }
 
 export function useSimulationSocket() {
@@ -40,6 +68,8 @@ export function useSimulationSocket() {
     const [plannedPaths, setPlannedPaths] = useState<PlannedPathsByDrone>({});
     const [plannedPaths3d, setPlannedPaths3d] = useState<PlannedPath3dByDrone>({});
     const [windShadowZones, setWindShadowZones] = useState<LatLng[]>([]);
+    const [orders, setOrders] = useState<OrdersById>({});
+    const [missions, setMissions] = useState<MissionsById>({});
     const [eventLogs, setEventLogs] = useState<EventLogEntry[]>([]);
 
     useEffect(() => {
@@ -66,6 +96,8 @@ export function useSimulationSocket() {
         setPlannedPaths({});
         setPlannedPaths3d({});
         setWindShadowZones([]);
+        setOrders({});
+        setMissions({});
     }, []);
 
     const selectedDrone = selectedDroneId ? drones[selectedDroneId] ?? null : null;
@@ -80,7 +112,10 @@ export function useSimulationSocket() {
         sendJson({ type: 'command', simId: activeSimId, action });
         if (action === 'pause') setSimulationStatus('paused');
         if (action === 'resume') setSimulationStatus('running');
-        if (action === 'stop') setSimulationStatus('stopped');
+        if (action === 'stop') {
+            setSimulationStatus('stopped');
+            clearSessionVisuals();
+        }
         if (action === 'reset') clearSessionVisuals();
     }, [activeSimId, addLocalEvent, clearSessionVisuals, sendJson]);
 
@@ -119,6 +154,33 @@ export function useSimulationSocket() {
         });
     }, [activeSimId, addLocalEvent, sendJson]);
 
+    const submitOrderBatch = useCallback((ordersInput: unknown[]) => {
+        if (!activeSimId) {
+            addLocalEvent('warning', 'NO_ACTIVE_SIMULATION', 'Start a simulation before submitting orders.');
+            return false;
+        }
+        return sendJson({
+            type: 'order_batch',
+            simId: activeSimId,
+            payload: {
+                orders: ordersInput,
+                autoDispatch: true
+            }
+        });
+    }, [activeSimId, addLocalEvent, sendJson]);
+
+    const dispatchOrders = useCallback(() => {
+        if (!activeSimId) {
+            addLocalEvent('warning', 'NO_ACTIVE_SIMULATION', 'Start a simulation before dispatching orders.');
+            return false;
+        }
+        return sendJson({
+            type: 'dispatch_orders',
+            simId: activeSimId,
+            payload: {}
+        });
+    }, [activeSimId, addLocalEvent, sendJson]);
+
     useEffect(() => {
         const ws = new WebSocket('ws://localhost:8080');
         wsRef.current = ws;
@@ -147,6 +209,8 @@ export function useSimulationSocket() {
                 setDrones({});
                 setPlannedPaths({});
                 setPlannedPaths3d({});
+                setOrders({});
+                setMissions({});
                 setSelectedDroneId(null);
                 addLocalEvent('info', 'SIMULATION_ASSIGNED', `Simulation assigned to worker ${data.workerId ?? '-'}.`, data.timestamp);
             } else if (data.type === 'worker_busy') {
@@ -156,6 +220,7 @@ export function useSimulationSocket() {
                 const finishedStatus = data.payload?.status;
                 setSimulationStatus(terminalToStatus(finishedStatus));
                 setActiveSimId(null);
+                clearSessionVisuals();
             } else if (data.type === 'ping') {
                 ws.send(JSON.stringify({ type: 'pong', timestamp: data.timestamp }));
             } else if (data.type === 'latency_update') {
@@ -179,6 +244,21 @@ export function useSimulationSocket() {
                 setPlannedPaths(prev => ({ ...prev, [droneId]: data.payload?.path ?? data.path ?? [] }));
                 setPlannedPaths3d(prev => ({ ...prev, [droneId]: data.payload?.path3d ?? data.path3d ?? [] }));
                 setSelectedDroneId(prev => prev ?? droneId);
+            } else if (data.type === 'order_state') {
+                setOrders(mapOrders(data.payload?.orders as DeliveryOrder[] | undefined));
+                setMissions(mapMissions(data.payload?.missions as Mission[] | undefined));
+            } else if (data.type === 'order_update') {
+                const order = data.payload as DeliveryOrder | undefined;
+                const key = order ? orderKey(order) : '';
+                if (order && key) {
+                    setOrders(prev => ({ ...prev, [key]: order }));
+                }
+            } else if (data.type === 'mission_update') {
+                const mission = data.payload as Mission | undefined;
+                const key = mission ? missionKey(mission) : '';
+                if (mission && key) {
+                    setMissions(prev => ({ ...prev, [key]: mission }));
+                }
             } else if (data.type === 'event') {
                 const payload = data.payload ?? {};
                 const droneId = data.droneId ?? payload.droneId ?? null;
@@ -207,7 +287,7 @@ export function useSimulationSocket() {
         };
 
         return () => ws.close();
-    }, [addLocalEvent]);
+    }, [addLocalEvent, clearSessionVisuals]);
 
     return {
         serverStatus,
@@ -226,6 +306,8 @@ export function useSimulationSocket() {
         selectedPlannedPath,
         selectedPath3d,
         windShadowZones,
+        orders,
+        missions,
         eventLogs,
         addLocalEvent,
         startSimulation,
@@ -235,6 +317,8 @@ export function useSimulationSocket() {
         resetSimulation: () => sendCommand('reset'),
         applyWeather,
         addObstacle,
+        submitOrderBatch,
+        dispatchOrders,
         clearSessionVisuals
     };
 }

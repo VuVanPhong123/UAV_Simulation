@@ -133,6 +133,44 @@ function eventCode(message) {
   return message && message.payload && message.payload.code;
 }
 
+function findOrder(message, orderId) {
+  const payload = message.payload || {};
+  if (message.type === 'order_update') {
+    const id = payload.orderId || payload.order_id;
+    return id === orderId ? payload : null;
+  }
+  if (message.type === 'order_state' && Array.isArray(payload.orders)) {
+    return payload.orders.find((order) => (order.orderId || order.order_id) === orderId) || null;
+  }
+  return null;
+}
+
+function isValidOrderPhase8(message, orderId) {
+  const order = findOrder(message, orderId);
+  if (!order) return false;
+  if (!['pending', 'assigned', 'failed'].includes(order.status)) return false;
+  if (order.status === 'failed') {
+    return Array.isArray(order.validationErrors || order.validation_errors);
+  }
+  if (order.status === 'assigned') {
+    return Boolean((order.assignedDroneId || order.assigned_drone_id) && (order.missionId || order.mission_id));
+  }
+  return Array.isArray(order.pickupNode || order.pickup_node)
+    && Array.isArray(order.dropoffNode || order.dropoff_node);
+}
+
+function findMission(message, missionId) {
+  const payload = message.payload || {};
+  if (message.type === 'mission_update') {
+    const id = payload.missionId || payload.mission_id;
+    return id === missionId ? payload : null;
+  }
+  if (message.type === 'order_state' && Array.isArray(payload.missions)) {
+    return payload.missions.find((mission) => (mission.missionId || mission.mission_id) === missionId) || null;
+  }
+  return null;
+}
+
 async function runScenario() {
   await waitFor((message) => message.type === 'registered' && message.role === 'frontend', 10000, 'frontend registered');
   pass('frontend registered');
@@ -174,6 +212,52 @@ async function runScenario() {
     fail('planned path altitude received', 'planned_path missing payload.path3d altitude points');
   }
   pass('planned path altitude received');
+
+  clearBacklog();
+  send({
+    type: 'order_batch',
+    simId,
+    payload: {
+      autoDispatch: true,
+      orders: [
+        {
+          orderId: 'order_test_1',
+          pickup: [21.0285, 105.8542],
+          dropoff: [21.0290, 105.8550],
+          payloadKg: 1.2,
+          priority: 'normal',
+        },
+      ],
+    },
+  });
+
+  const dispatchedOrderMessage = await waitFor(
+    (message) => (
+      message.simId === simId
+      && ['order_update', 'order_state'].includes(message.type)
+      && isValidOrderPhase8(message, 'order_test_1')
+      && findOrder(message, 'order_test_1').status === 'assigned'
+    ),
+    60000,
+    'order auto dispatch accepted'
+  );
+  const dispatchedOrder = findOrder(dispatchedOrderMessage, 'order_test_1');
+  if (!dispatchedOrder || dispatchedOrder.status !== 'assigned') {
+    fail('order auto dispatch accepted', `expected assigned order, got ${dispatchedOrder && dispatchedOrder.status}`);
+  }
+  pass('order auto dispatch accepted');
+
+  const missionId = dispatchedOrder.missionId || dispatchedOrder.mission_id;
+  await waitFor(
+    (message) => (
+      message.simId === simId
+      && ['mission_update', 'order_state'].includes(message.type)
+      && findMission(message, missionId)
+    ),
+    60000,
+    'mission created'
+  );
+  pass('mission created');
 
   clearBacklog();
   send({

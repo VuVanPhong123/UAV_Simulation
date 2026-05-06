@@ -366,12 +366,23 @@ function handleMessage(ws, rawMessage) {
         return;
     }
 
-    if (['command', 'weather_update', 'add_obstacle'].includes(data.type)) {
+    if (['command', 'weather_update', 'add_obstacle', 'order_batch', 'dispatch_orders'].includes(data.type)) {
         routeFrontendMessage(ws, data);
         return;
     }
 
-    if (['config', 'telemetry', 'event', 'planned_path', 'wind_shadow_zones', 'simulation_finished', 'worker_status'].includes(data.type)) {
+    if ([
+        'config',
+        'telemetry',
+        'event',
+        'planned_path',
+        'wind_shadow_zones',
+        'order_state',
+        'order_update',
+        'mission_update',
+        'simulation_finished',
+        'worker_status'
+    ].includes(data.type)) {
         if (meta?.role === 'worker') {
             routeWorkerMessage(ws, data);
         } else {
