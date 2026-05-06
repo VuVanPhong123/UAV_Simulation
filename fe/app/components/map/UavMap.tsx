@@ -14,6 +14,7 @@ import type {
     LayerToggles,
     MapInteractionMode,
     MapConfig,
+    MissionsById,
     OrdersById,
     PathHistoryByDrone,
     PlannedPathsByDrone
@@ -33,7 +34,9 @@ type UavMapProps = {
     mapConfig: MapConfig | null;
     drones: DronesById;
     orders: OrdersById;
+    missions: MissionsById;
     selectedOrderId: string | null;
+    selectedMissionId: string | null;
     selectedDroneId: string | null;
     plannedPaths: PlannedPathsByDrone;
     pathHistoryByDrone: PathHistoryByDrone;
@@ -64,7 +67,9 @@ export default function UavMap({
     mapConfig,
     drones,
     orders,
+    missions,
     selectedOrderId,
+    selectedMissionId,
     selectedDroneId,
     plannedPaths,
     pathHistoryByDrone,
@@ -89,6 +94,8 @@ export default function UavMap({
     }, [layers.windShadow, windShadowZones]);
     const selectedPlannedPath = selectedDroneId ? plannedPaths[selectedDroneId] ?? [] : [];
     const selectedPathHistory = selectedDroneId ? pathHistoryByDrone[selectedDroneId] ?? [] : [];
+    const selectedMission = selectedMissionId ? missions[selectedMissionId] ?? null : null;
+    const selectedMissionOrderId = selectedMission?.orderId ?? selectedMission?.order_id ?? null;
     const interactionText = mapInteractionMode === 'select_pickup'
         ? 'Đang chọn điểm lấy hàng trên bản đồ'
         : mapInteractionMode === 'select_dropoff'
@@ -188,34 +195,39 @@ export default function UavMap({
                     );
                 })}
 
-                {layers.orders && Object.values(orders).map(order => {
+                {Object.values(orders).filter(order => {
+                    const orderId = orderIdOf(order);
+                    return layers.orders || selectedOrderId === orderId || selectedMissionOrderId === orderId;
+                }).map(order => {
                     const orderId = orderIdOf(order);
                     const pickup = order.pickup;
                     const dropoff = order.dropoff;
-                    const selected = selectedOrderId === orderId;
+                    const selected = selectedOrderId === orderId || selectedMissionOrderId === orderId;
                     const completed = ['completed', 'failed', 'canceled'].includes(order.status);
                     const pickupColor = completed ? '#64748b' : '#0ea5e9';
                     const dropoffColor = completed ? '#64748b' : '#f97316';
+                    const assignedDroneId = order.assignedDroneId ?? order.assigned_drone_id;
+                    const tooltipSuffix = assignedDroneId ? ` / UAV ${assignedDroneId}` : '';
                     return (
                         <Fragment key={`order-${orderId}`}>
                             {Array.isArray(pickup) && pickup.length === 2 && (
                                 <CircleMarker
                                     center={pickup}
-                                    radius={selected ? 8 : 5}
+                                    radius={selected ? 10 : 5}
                                     eventHandlers={{ click: () => onSelectOrder?.(orderId) }}
-                                    pathOptions={{ color: pickupColor, fillColor: pickupColor, fillOpacity: selected ? 1 : 0.75, weight: selected ? 4 : 2 }}
+                                    pathOptions={{ color: pickupColor, fillColor: pickupColor, fillOpacity: selected ? 1 : 0.75, weight: selected ? 5 : 2 }}
                                 >
-                                    <Tooltip permanent={selected} direction="top">Lấy hàng: {orderId} / {translateOrderStatus(order.status)}</Tooltip>
+                                    <Tooltip permanent={selected} direction="top">Lấy hàng: {orderId}{tooltipSuffix} / {translateOrderStatus(order.status)}</Tooltip>
                                 </CircleMarker>
                             )}
                             {Array.isArray(dropoff) && dropoff.length === 2 && (
                                 <CircleMarker
                                     center={dropoff}
-                                    radius={selected ? 8 : 5}
+                                    radius={selected ? 10 : 5}
                                     eventHandlers={{ click: () => onSelectOrder?.(orderId) }}
-                                    pathOptions={{ color: dropoffColor, fillColor: dropoffColor, fillOpacity: selected ? 1 : 0.75, weight: selected ? 4 : 2 }}
+                                    pathOptions={{ color: dropoffColor, fillColor: dropoffColor, fillOpacity: selected ? 1 : 0.75, weight: selected ? 5 : 2 }}
                                 >
-                                    <Tooltip permanent={selected} direction="bottom">Giao hàng: {orderId} / {translateOrderStatus(order.status)}</Tooltip>
+                                    <Tooltip permanent={selected} direction="bottom">Giao hàng: {orderId}{tooltipSuffix} / {translateOrderStatus(order.status)}</Tooltip>
                                 </CircleMarker>
                             )}
                         </Fragment>

@@ -12,13 +12,16 @@ try {
 }
 
 const WS_URL = 'ws://localhost:8080';
-const TOTAL_TIMEOUT_MS = 300000;
+const TOTAL_TIMEOUT_MS = 420000;
 
 let ws;
 let simId = null;
 let lastTelemetryCount = 0;
 const pending = [];
 const backlog = [];
+const observedOrders = new Map();
+const observedMissions = new Map();
+let observedMissionTelemetry = false;
 
 function pass(step) {
   console.log(`[PASS] ${step}`);
@@ -86,6 +89,12 @@ function clearBacklog() {
   backlog.length = 0;
 }
 
+function clearObservedRuntime() {
+  observedOrders.clear();
+  observedMissions.clear();
+  observedMissionTelemetry = false;
+}
+
 function telemetryPayload(message) {
   return message.payload || message;
 }
@@ -133,6 +142,47 @@ function eventCode(message) {
   return message && message.payload && message.payload.code;
 }
 
+function orderKey(order) {
+  return order && (order.orderId || order.order_id);
+}
+
+function missionKey(mission) {
+  return mission && (mission.missionId || mission.mission_id);
+}
+
+function rememberRuntimeMessage(message) {
+  if (!simId || message.simId !== simId) return;
+  const payload = message.payload || {};
+  if (message.type === 'order_update') {
+    const key = orderKey(payload);
+    if (key) observedOrders.set(key, payload);
+  }
+  if (message.type === 'order_state') {
+    if (Array.isArray(payload.orders)) {
+      payload.orders.forEach((order) => {
+        const key = orderKey(order);
+        if (key) observedOrders.set(key, order);
+      });
+    }
+    if (Array.isArray(payload.missions)) {
+      payload.missions.forEach((mission) => {
+        const key = missionKey(mission);
+        if (key) observedMissions.set(key, mission);
+      });
+    }
+  }
+  if (message.type === 'mission_update') {
+    const key = missionKey(payload);
+    if (key) observedMissions.set(key, payload);
+  }
+  if (message.type === 'telemetry') {
+    const telemetry = telemetryPayload(message);
+    if (telemetry.currentOrderId || telemetry.currentMissionId) {
+      observedMissionTelemetry = true;
+    }
+  }
+}
+
 function findOrder(message, orderId) {
   const payload = message.payload || {};
   if (message.type === 'order_update') {
@@ -177,6 +227,39 @@ function missionContextTelemetry(message, orderId, missionId) {
   return payload.currentOrderId === orderId || payload.currentMissionId === missionId;
 }
 
+function isRejectedOrder(message, orderId) {
+  const order = findOrder(message, orderId);
+  if (!order || order.status !== 'failed') return false;
+  const validationErrors = order.validationErrors || order.validation_errors;
+  const failedReason = order.failedReason || order.failed_reason;
+  return (Array.isArray(validationErrors) && validationErrors.length > 0)
+    || (typeof failedReason === 'string' && failedReason.length > 0);
+}
+
+function activeMultiOrderCount() {
+  return Array.from(observedOrders.values()).filter((order) => (
+    orderKey(order)
+    && orderKey(order).startsWith('order_multi_')
+    && ['assigned', 'going_to_pickup', 'picked_up', 'delivering', 'completed'].includes(order.status)
+  )).length;
+}
+
+function progressedMultiOrderCount() {
+  return Array.from(observedOrders.values()).filter((order) => (
+    orderKey(order)
+    && orderKey(order).startsWith('order_multi_')
+    && ['going_to_pickup', 'picked_up', 'delivering', 'completed'].includes(order.status)
+  )).length;
+}
+
+function multiMissionCount() {
+  const linkedMissions = Array.from(observedMissions.values()).filter((mission) => {
+    const orderId = mission.orderId || mission.order_id;
+    return typeof orderId === 'string' && orderId.startsWith('order_multi_');
+  }).length;
+  return linkedMissions > 0 ? linkedMissions : observedMissions.size;
+}
+
 async function runScenario() {
   await waitFor((message) => message.type === 'registered' && message.role === 'frontend', 10000, 'frontend registered');
   pass('frontend registered');
@@ -204,6 +287,7 @@ async function runScenario() {
 
   const assigned = await waitFor((message) => message.type === 'simulation_assigned', 30000, 'simulation assigned');
   simId = assigned.simId;
+  clearObservedRuntime();
   pass('simulation assigned');
 
   await waitFor((message) => message.type === 'config' && message.simId === simId, 180000, 'config');
@@ -281,6 +365,35 @@ async function runScenario() {
     'pickup/dropoff mission progress observed'
   );
   pass('pickup/dropoff mission progress observed');
+
+  clearBacklog();
+  send({
+    type: 'order_batch',
+    simId,
+    payload: {
+      autoDispatch: true,
+      orders: [
+        {
+          orderId: 'order_too_heavy',
+          pickup: [21.0285, 105.8542],
+          dropoff: [21.0290, 105.8550],
+          payloadKg: 999,
+          priority: 'normal',
+        },
+      ],
+    },
+  });
+
+  await waitFor(
+    (message) => (
+      message.simId === simId
+      && ['order_update', 'order_state'].includes(message.type)
+      && isRejectedOrder(message, 'order_too_heavy')
+    ),
+    60000,
+    'overweight order rejected'
+  );
+  pass('overweight order rejected');
 
   clearBacklog();
   send({
@@ -373,6 +486,7 @@ async function runScenario() {
 
   const multiAssigned = await waitFor((message) => message.type === 'simulation_assigned', 30000, 'multi-drone simulation assigned');
   simId = multiAssigned.simId;
+  clearObservedRuntime();
   pass('multi-drone simulation assigned');
 
   await waitFor((message) => message.type === 'config' && message.simId === simId, 180000, 'multi-drone config');
@@ -411,6 +525,77 @@ async function runScenario() {
     }
   });
   pass('multi-drone planned paths received');
+
+  clearBacklog();
+  send({
+    type: 'order_batch',
+    simId,
+    payload: {
+      autoDispatch: true,
+      orders: [
+        {
+          orderId: 'order_multi_1',
+          pickup: [21.0285, 105.8542],
+          dropoff: [21.0290, 105.8550],
+          payloadKg: 0.8,
+          priority: 'normal',
+        },
+        {
+          orderId: 'order_multi_2',
+          pickup: [21.0278, 105.8536],
+          dropoff: [21.0300, 105.8560],
+          payloadKg: 1.1,
+          priority: 'high',
+        },
+        {
+          orderId: 'order_multi_3',
+          pickup: [21.0268, 105.8528],
+          dropoff: [21.0296, 105.8538],
+          payloadKg: 1.5,
+          priority: 'urgent',
+        },
+        {
+          orderId: 'order_multi_4',
+          pickup: [21.0290, 105.8550],
+          dropoff: [21.0278, 105.8536],
+          payloadKg: 1.8,
+          priority: 'normal',
+        },
+        {
+          orderId: 'order_multi_5',
+          pickup: [21.0300, 105.8560],
+          dropoff: [21.0268, 105.8528],
+          payloadKg: 2.0,
+          priority: 'high',
+        },
+      ],
+    },
+  });
+
+  await waitFor(
+    (message) => {
+      rememberRuntimeMessage(message);
+      return message.simId === simId
+        && ['order_update', 'order_state', 'mission_update'].includes(message.type)
+        && activeMultiOrderCount() >= 3;
+    },
+    90000,
+    'multi-order dispatch accepted'
+  );
+  pass('multi-order dispatch accepted');
+
+  await waitFor(
+    (message) => {
+      rememberRuntimeMessage(message);
+      return message.simId === simId
+        && ['telemetry', 'order_update', 'order_state', 'mission_update'].includes(message.type)
+        && multiMissionCount() >= 3
+        && (observedMissionTelemetry || progressedMultiOrderCount() >= 1);
+    },
+    120000,
+    'multi-order mission progress observed'
+  );
+  pass('multi-order mission progress observed');
 
   clearBacklog();
   send({
@@ -490,6 +675,8 @@ ws.on('message', (data) => {
       timestamp: message.timestamp,
     });
   }
+
+  rememberRuntimeMessage(message);
 
   if (!flushWaiters(message)) {
     backlog.push(message);

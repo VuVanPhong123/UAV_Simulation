@@ -71,6 +71,47 @@ export function translatePriority(priority?: string) {
     return priority ? labels[priority] ?? priority : '--';
 }
 
+export function translateTargetType(targetType?: string | null) {
+    const labels: Record<string, string> = {
+        pickup: 'Điểm lấy hàng',
+        dropoff: 'Điểm giao hàng',
+        charging_station: 'Trạm sạc',
+        goal: 'Điểm đích mô phỏng',
+        idle: 'Chờ nhiệm vụ'
+    };
+    return targetType ? labels[targetType] ?? targetType : '--';
+}
+
+export function translateEventFilter(filter: string) {
+    const labels: Record<string, string> = {
+        all: 'Tất cả',
+        selected_drone: 'UAV đang chọn',
+        selected_order: 'Đơn đang chọn',
+        selected_mission: 'Mission đang chọn'
+    };
+    return labels[filter] ?? filter;
+}
+
+export function formatDistanceMeters(value?: number | null) {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return '--';
+    if (value >= 1000) return `${(value / 1000).toFixed(2)} km`;
+    return `${Math.round(value)} m`;
+}
+
+export function formatEtaSeconds(value?: number | null) {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return '--';
+    const totalSeconds = Math.round(value);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    if (minutes <= 0) return `${seconds} giây`;
+    return `${minutes} phút ${seconds.toString().padStart(2, '0')} giây`;
+}
+
+export function formatPayloadKg(value?: number | null) {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return '--';
+    return `${value.toFixed(value % 1 === 0 ? 0 : 1)} kg`;
+}
+
 export function formatLatLng(latlng?: [number, number] | null) {
     if (!latlng) return '--';
     return `${latlng[0].toFixed(6)}, ${latlng[1].toFixed(6)}`;

@@ -12,6 +12,9 @@ import TelemetryPanel from '../panels/TelemetryPanel';
 import WeatherPanel from '../panels/WeatherPanel';
 import OrderManagementPanel from './OrderManagementPanel';
 import OrderDetailPanel from './OrderDetailPanel';
+import DroneMissionPanel from './DroneMissionPanel';
+import EventFilterBar from './EventFilterBar';
+import MissionProgressPanel from './MissionProgressPanel';
 import {
     orderIdOf,
     missionIdOf,
@@ -24,6 +27,7 @@ import type {
     DraftOrder,
     DroneTelemetry,
     DronesById,
+    EventFilter,
     EventLogEntry,
     LayerToggles,
     MapInteractionMode,
@@ -64,6 +68,8 @@ type RightDetailPanelProps = {
     draftOrder: DraftOrder;
     draftOrders: DraftOrder[];
     selectedOrderId: string | null;
+    selectedMissionId: string | null;
+    eventFilter: EventFilter;
     mapInteractionMode: MapInteractionMode;
     importError: string | null;
     onStart: () => void;
@@ -78,6 +84,9 @@ type RightDetailPanelProps = {
     onObstacleChange: (key: keyof ObstacleConfig, value: number | ObstacleType) => void;
     onLayerToggle: (key: keyof LayerToggles) => void;
     onSelectOrder: (orderId: string) => void;
+    onSelectMission: (missionId: string) => void;
+    onEventFilterChange: (value: EventFilter) => void;
+    onAddDemoDraftOrders: (orders: DraftOrder[]) => void;
     onDraftChange: <K extends keyof DraftOrder>(key: K, value: DraftOrder[K]) => void;
     onAddDraftOrder: () => void;
     onRemoveDraftOrder: (orderId: string) => void;
@@ -164,41 +173,54 @@ function OrdersSummaryPanel({ orders, missions }: { orders: OrdersById; missions
     );
 }
 
-function CurrentMissionPanel({
-    droneState,
-    orders,
-    missions
-}: {
-    droneState: DroneTelemetry | null;
-    orders: OrdersById;
-    missions: MissionsById;
-}) {
-    const order = droneState?.currentOrderId ? orders[droneState.currentOrderId] : null;
-    const mission = droneState?.currentMissionId ? missions[droneState.currentMissionId] : null;
-    return (
-        <SectionFrame title="Nhiệm vụ hiện tại">
-            <div className="grid grid-cols-2 gap-x-3 gap-y-1 font-mono text-xs font-bold text-slate-700">
-                <span className="text-slate-500">Đơn hàng</span>
-                <span className="truncate text-right">{droneState?.currentOrderId ?? '--'}</span>
-                <span className="text-slate-500">Nhiệm vụ</span>
-                <span className="truncate text-right">{droneState?.currentMissionId ?? '--'}</span>
-                <span className="text-slate-500">Mục tiêu</span>
-                <span className="truncate text-right">{droneState?.currentTargetType ?? '--'}</span>
-                <span className="text-slate-500">Trạng thái đơn</span>
-                <span className="truncate text-right">{translateOrderStatus(order?.status)}</span>
-                <span className="text-slate-500">Trạng thái nhiệm vụ</span>
-                <span className="truncate text-right">{translateMissionStatus(mission?.status)}</span>
-            </div>
-        </SectionFrame>
-    );
+function includesId(log: EventLogEntry, id: string | null) {
+    if (!id) return false;
+    return [log.orderId, log.missionId, log.droneId, log.code, log.message]
+        .filter(Boolean)
+        .some(value => String(value).includes(id));
+}
+
+function filterEvents(
+    events: EventLogEntry[],
+    eventFilter: EventFilter,
+    selectedDroneId: string | null,
+    selectedOrderId: string | null,
+    selectedMissionId: string | null
+) {
+    if (eventFilter === 'selected_drone') {
+        return events.filter(log => selectedDroneId && log.droneId === selectedDroneId);
+    }
+    if (eventFilter === 'selected_order') {
+        return events.filter(log => includesId(log, selectedOrderId));
+    }
+    if (eventFilter === 'selected_mission') {
+        return events.filter(log => includesId(log, selectedMissionId));
+    }
+    return events;
 }
 
 export default function RightDetailPanel(props: RightDetailPanelProps) {
-    const selectedOrder = props.selectedOrderId ? props.orders[props.selectedOrderId] ?? null : null;
-    const selectedMissionId = selectedOrder?.missionId ?? selectedOrder?.mission_id;
-    const relatedMission = selectedMissionId ? props.missions[selectedMissionId] ?? null : null;
-    const relatedDroneId = selectedOrder?.assignedDroneId ?? selectedOrder?.assigned_drone_id;
-    const relatedDrone = relatedDroneId ? props.drones[relatedDroneId] ?? null : null;
+    const selectedDrone = props.selectedDroneId ? props.drones[props.selectedDroneId] ?? props.droneState : props.droneState;
+    const selectedOrder = props.selectedOrderId
+        ? props.orders[props.selectedOrderId] ?? null
+        : selectedDrone?.currentOrderId
+            ? props.orders[selectedDrone.currentOrderId] ?? null
+            : null;
+    const orderMissionId = selectedOrder?.missionId ?? selectedOrder?.mission_id ?? null;
+    const droneMissionId = selectedDrone?.currentMissionId ?? null;
+    const selectedMission = props.selectedMissionId
+        ? props.missions[props.selectedMissionId] ?? null
+        : orderMissionId
+            ? props.missions[orderMissionId] ?? null
+            : droneMissionId
+                ? props.missions[droneMissionId] ?? null
+                : null;
+    const missionOrderId = selectedMission?.orderId ?? selectedMission?.order_id ?? null;
+    const progressOrder = selectedOrder ?? (missionOrderId ? props.orders[missionOrderId] ?? null : null);
+    const missionDroneId = selectedMission?.droneId ?? selectedMission?.drone_id ?? null;
+    const orderDroneId = progressOrder?.assignedDroneId ?? progressOrder?.assigned_drone_id ?? null;
+    const relatedDrone = selectedDrone ?? (missionDroneId ? props.drones[missionDroneId] ?? null : orderDroneId ? props.drones[orderDroneId] ?? null : null);
+    const filteredEvents = filterEvents(props.eventLogs, props.eventFilter, props.selectedDroneId, props.selectedOrderId, props.selectedMissionId);
 
     return (
         <aside className="w-[380px] shrink-0 overflow-y-auto border-l border-slate-200 bg-slate-50 p-3">
@@ -209,12 +231,23 @@ export default function RightDetailPanel(props: RightDetailPanelProps) {
                         <ControlPanel {...props} />
                         <SectionFrame title="Tổng quan khai thác">
                             <div className="grid grid-cols-2 gap-2">
-                                <SummaryCard label="Số UAV" value={Object.keys(props.drones).length} />
-                                <SummaryCard label="Số đơn hàng" value={Object.keys(props.orders).length} />
+                                <SummaryCard label="Tổng UAV" value={Object.keys(props.drones).length} />
+                                <SummaryCard label="UAV đang giao" value={Object.values(props.drones).filter(drone => Boolean(drone.currentOrderId || drone.currentMissionId)).length} />
                                 <SummaryCard label="Đơn đang giao" value={Object.values(props.orders).filter(order => ['going_to_pickup', 'picked_up', 'delivering'].includes(order.status)).length} />
-                                <SummaryCard label="Đơn xong/lỗi" value={Object.values(props.orders).filter(order => ['completed', 'failed'].includes(order.status)).length} />
+                                <SummaryCard label="Đơn hoàn thành" value={Object.values(props.orders).filter(order => order.status === 'completed').length} />
+                                <SummaryCard label="Đơn thất bại" value={Object.values(props.orders).filter(order => order.status === 'failed').length} />
                             </div>
                         </SectionFrame>
+                        {(progressOrder || selectedMission || relatedDrone) && (
+                            <MissionProgressPanel
+                                order={progressOrder}
+                                mission={selectedMission}
+                                drone={relatedDrone}
+                                plannedPath3d={props.plannedPath3d}
+                                onSelectDrone={props.onSelectDrone}
+                                onSelectOrder={props.onSelectOrder}
+                            />
+                        )}
                     </>
                 )}
 
@@ -229,7 +262,9 @@ export default function RightDetailPanel(props: RightDetailPanelProps) {
                             activeSimId={props.activeSimId}
                             mapInteractionMode={props.mapInteractionMode}
                             importError={props.importError}
+                            droneCount={props.droneCount}
                             onSelectOrder={props.onSelectOrder}
+                            onAddDemoDraftOrders={props.onAddDemoDraftOrders}
                             onDraftChange={props.onDraftChange}
                             onAddDraftOrder={props.onAddDraftOrder}
                             onRemoveDraftOrder={props.onRemoveDraftOrder}
@@ -239,17 +274,46 @@ export default function RightDetailPanel(props: RightDetailPanelProps) {
                             onSetMapInteractionMode={props.onSetMapInteractionMode}
                         />
                         <OrderDetailPanel
-                            selectedOrder={selectedOrder}
-                            relatedMission={relatedMission}
+                            selectedOrder={progressOrder}
+                            relatedMission={selectedMission}
                             relatedDrone={relatedDrone}
                         />
+                        {(progressOrder || selectedMission || relatedDrone) && (
+                            <MissionProgressPanel
+                                order={progressOrder}
+                                mission={selectedMission}
+                                drone={relatedDrone}
+                                plannedPath3d={props.plannedPath3d}
+                                onSelectDrone={props.onSelectDrone}
+                                onSelectOrder={props.onSelectOrder}
+                            />
+                        )}
                     </>
                 )}
 
                 {props.activeSection === 'drones' && (
                     <>
                         <DroneListPanel drones={props.drones} selectedDroneId={props.selectedDroneId} onSelect={props.onSelectDrone} />
-                        <CurrentMissionPanel droneState={props.droneState} orders={props.orders} missions={props.missions} />
+                        <DroneMissionPanel
+                            selectedDrone={selectedDrone}
+                            selectedOrder={progressOrder}
+                            selectedMission={selectedMission}
+                            orders={props.orders}
+                            missions={props.missions}
+                            plannedPath3d={props.plannedPath3d}
+                            onSelectOrder={props.onSelectOrder}
+                            onSelectMission={props.onSelectMission}
+                        />
+                        {(progressOrder || selectedMission) && (
+                            <MissionProgressPanel
+                                order={progressOrder}
+                                mission={selectedMission}
+                                drone={relatedDrone}
+                                plannedPath3d={props.plannedPath3d}
+                                onSelectDrone={props.onSelectDrone}
+                                onSelectOrder={props.onSelectOrder}
+                            />
+                        )}
                         <TelemetryPanel
                             droneState={props.droneState}
                             batteryHistory={props.batteryHistory}
@@ -299,7 +363,24 @@ export default function RightDetailPanel(props: RightDetailPanelProps) {
                     </>
                 )}
 
-                {props.activeSection === 'events' && <EventLogPanel events={props.eventLogs} limit={40} />}
+                {props.activeSection === 'events' && (
+                    <SectionFrame title="Bộ lọc sự kiện">
+                        <div className="space-y-3">
+                            <EventFilterBar
+                                value={props.eventFilter}
+                                selectedDroneId={props.selectedDroneId}
+                                selectedOrderId={props.selectedOrderId}
+                                selectedMissionId={props.selectedMissionId}
+                                onChange={props.onEventFilterChange}
+                            />
+                            {filteredEvents.length > 0 ? (
+                                <EventLogPanel events={filteredEvents} limit={40} />
+                            ) : (
+                                <p className="text-sm italic text-slate-400">Không có sự kiện phù hợp với bộ lọc hiện tại.</p>
+                            )}
+                        </div>
+                    </SectionFrame>
+                )}
             </div>
         </aside>
     );

@@ -14,6 +14,7 @@ import {
     type ActiveDashboardSection,
     type DraftOrder,
     type DynamicObstacle,
+    type EventFilter,
     type LatLng,
     type LayerToggles,
     type MapInteractionMode,
@@ -47,6 +48,8 @@ export default function GcsDashboard() {
     const [draftOrder, setDraftOrder] = useState<DraftOrder>(createDraftOrder);
     const [draftOrders, setDraftOrders] = useState<DraftOrder[]>([]);
     const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
+    const [selectedMissionId, setSelectedMissionId] = useState<string | null>(null);
+    const [eventFilter, setEventFilter] = useState<EventFilter>('all');
     const [mapInteractionMode, setMapInteractionMode] = useState<MapInteractionMode>('none');
     const [importError, setImportError] = useState<string | null>(null);
 
@@ -115,6 +118,14 @@ export default function GcsDashboard() {
         setDraftOrders(prev => prev.filter(order => order.orderId !== orderId));
     }, []);
 
+    const handleAddDemoDraftOrders = useCallback((orders: DraftOrder[]) => {
+        setDraftOrders(prev => [
+            ...prev.filter(existing => !orders.some(order => order.orderId === existing.orderId)),
+            ...orders
+        ]);
+        addLocalEvent('info', 'DEMO_ORDERS_ADDED', `Đã thêm ${orders.length} đơn demo vào danh sách nháp.`);
+    }, [addLocalEvent]);
+
     const handleSubmitDraftOrders = useCallback(() => {
         if (draftOrders.length === 0) return;
         if (socket.submitOrderBatch(draftOrders)) {
@@ -163,16 +174,47 @@ export default function GcsDashboard() {
         }
     }, [addLocalEvent, socket]);
 
+    const handleSelectDrone = useCallback((droneId: string) => {
+        socket.setSelectedDroneId(droneId);
+        const drone = socket.drones[droneId];
+        const relatedOrder = drone?.currentOrderId
+            ? socket.orders[drone.currentOrderId] ?? null
+            : Object.values(socket.orders).find(order => (order.assignedDroneId ?? order.assigned_drone_id) === droneId) ?? null;
+        const relatedMission = drone?.currentMissionId
+            ? socket.missions[drone.currentMissionId] ?? null
+            : relatedOrder?.missionId || relatedOrder?.mission_id
+                ? socket.missions[relatedOrder.missionId ?? relatedOrder.mission_id ?? ''] ?? null
+                : Object.values(socket.missions).find(item => (item.droneId ?? item.drone_id) === droneId) ?? null;
+        setSelectedOrderId(relatedOrder ? relatedOrder.orderId ?? relatedOrder.order_id ?? drone?.currentOrderId ?? null : drone?.currentOrderId ?? null);
+        setSelectedMissionId(relatedMission ? relatedMission.missionId ?? relatedMission.mission_id ?? drone?.currentMissionId ?? null : drone?.currentMissionId ?? null);
+    }, [socket]);
+
     const handleSelectOrder = useCallback((orderId: string) => {
         setSelectedOrderId(orderId);
+        const order = socket.orders[orderId];
+        const missionId = order?.missionId ?? order?.mission_id ?? null;
+        const assignedDroneId = order?.assignedDroneId ?? order?.assigned_drone_id ?? null;
+        setSelectedMissionId(missionId);
+        socket.setSelectedDroneId(assignedDroneId);
         setActiveSection('orders');
-    }, []);
+    }, [socket]);
+
+    const handleSelectMission = useCallback((missionId: string) => {
+        setSelectedMissionId(missionId);
+        const mission = socket.missions[missionId];
+        const orderId = mission?.orderId ?? mission?.order_id ?? null;
+        const droneId = mission?.droneId ?? mission?.drone_id ?? null;
+        setSelectedOrderId(orderId);
+        socket.setSelectedDroneId(droneId);
+    }, [socket]);
 
     const handleReset = useCallback(() => {
         socket.resetSimulation();
         telemetryHistory.resetHistory();
         setDynamicObstacles([]);
         setSelectedOrderId(null);
+        setSelectedMissionId(null);
+        setEventFilter('all');
         setMapInteractionMode('none');
     }, [socket, telemetryHistory]);
 
@@ -181,6 +223,8 @@ export default function GcsDashboard() {
         telemetryHistory.resetHistory();
         setDynamicObstacles([]);
         setSelectedOrderId(null);
+        setSelectedMissionId(null);
+        setEventFilter('all');
         setMapInteractionMode('none');
     }, [socket, telemetryHistory]);
 
@@ -222,7 +266,9 @@ export default function GcsDashboard() {
                             mapConfig={socket.mapConfig}
                             drones={socket.drones}
                             orders={socket.orders}
+                            missions={socket.missions}
                             selectedOrderId={selectedOrderId}
+                            selectedMissionId={selectedMissionId}
                             selectedDroneId={socket.selectedDroneId}
                             plannedPaths={socket.plannedPaths}
                             pathHistoryByDrone={telemetryHistory.pathHistoryByDrone}
@@ -233,11 +279,18 @@ export default function GcsDashboard() {
                             windSpeed={weather.wind_speed}
                             mapInteractionMode={mapInteractionMode}
                             onMapClick={handleMapClick}
-                            onSelectDrone={socket.setSelectedDroneId}
+                            onSelectDrone={handleSelectDrone}
                             onSelectOrder={handleSelectOrder}
                         />
                     </main>
-                    <BottomEventPanel events={socket.eventLogs} />
+                    <BottomEventPanel
+                        events={socket.eventLogs}
+                        selectedDroneId={socket.selectedDroneId}
+                        selectedOrderId={selectedOrderId}
+                        selectedMissionId={selectedMissionId}
+                        eventFilter={eventFilter}
+                        onEventFilterChange={setEventFilter}
+                    />
                 </div>
                 <RightDetailPanel
                     activeSection={activeSection}
@@ -264,11 +317,13 @@ export default function GcsDashboard() {
                     draftOrder={draftOrder}
                     draftOrders={draftOrders}
                     selectedOrderId={selectedOrderId}
+                    selectedMissionId={selectedMissionId}
+                    eventFilter={eventFilter}
                     mapInteractionMode={mapInteractionMode}
                     importError={importError}
                     onStart={() => socket.startSimulation(droneCount)}
                     onDroneCountChange={setDroneCount}
-                    onSelectDrone={socket.setSelectedDroneId}
+                    onSelectDrone={handleSelectDrone}
                     onPause={socket.pauseSimulation}
                     onResume={socket.resumeSimulation}
                     onStop={handleStop}
@@ -278,6 +333,9 @@ export default function GcsDashboard() {
                     onObstacleChange={handleObstacleChange}
                     onLayerToggle={handleLayerToggle}
                     onSelectOrder={handleSelectOrder}
+                    onSelectMission={handleSelectMission}
+                    onEventFilterChange={setEventFilter}
+                    onAddDemoDraftOrders={handleAddDemoDraftOrders}
                     onDraftChange={handleDraftChange}
                     onAddDraftOrder={handleAddDraftOrder}
                     onRemoveDraftOrder={handleRemoveDraftOrder}

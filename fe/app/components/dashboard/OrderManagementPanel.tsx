@@ -27,7 +27,9 @@ type OrderManagementPanelProps = {
     activeSimId: string | null;
     mapInteractionMode: MapInteractionMode;
     importError: string | null;
+    droneCount: number;
     onSelectOrder: (orderId: string) => void;
+    onAddDemoDraftOrders: (orders: DraftOrder[]) => void;
     onDraftChange: <K extends keyof DraftOrder>(key: K, value: DraftOrder[K]) => void;
     onAddDraftOrder: () => void;
     onRemoveDraftOrder: (orderId: string) => void;
@@ -38,6 +40,64 @@ type OrderManagementPanelProps = {
 };
 
 const priorities: OrderPriority[] = ['low', 'normal', 'high', 'urgent'];
+
+const demoScenarios: Record<string, DraftOrder[]> = {
+    single: [
+        {
+            orderId: 'demo_1_order',
+            pickup: [21.0285, 105.8542],
+            dropoff: [21.0290, 105.8550],
+            payloadKg: 1.2,
+            priority: 'high'
+        }
+    ],
+    multi: [
+        {
+            orderId: 'demo_multi_1',
+            pickup: [21.0285, 105.8542],
+            dropoff: [21.0290, 105.8550],
+            payloadKg: 0.8,
+            priority: 'normal'
+        },
+        {
+            orderId: 'demo_multi_2',
+            pickup: [21.0278, 105.8536],
+            dropoff: [21.0300, 105.8560],
+            payloadKg: 1.1,
+            priority: 'high'
+        },
+        {
+            orderId: 'demo_multi_3',
+            pickup: [21.0268, 105.8528],
+            dropoff: [21.0296, 105.8538],
+            payloadKg: 1.5,
+            priority: 'urgent'
+        },
+        {
+            orderId: 'demo_multi_4',
+            pickup: [21.0290, 105.8550],
+            dropoff: [21.0278, 105.8536],
+            payloadKg: 1.8,
+            priority: 'normal'
+        },
+        {
+            orderId: 'demo_multi_5',
+            pickup: [21.0300, 105.8560],
+            dropoff: [21.0268, 105.8528],
+            payloadKg: 2.0,
+            priority: 'high'
+        }
+    ],
+    overweight: [
+        {
+            orderId: 'demo_payload_too_heavy',
+            pickup: [21.0285, 105.8542],
+            dropoff: [21.0290, 105.8550],
+            payloadKg: 999,
+            priority: 'normal'
+        }
+    ]
+};
 
 function NumberInput({
     label,
@@ -82,7 +142,9 @@ export default function OrderManagementPanel({
     activeSimId,
     mapInteractionMode,
     importError,
+    droneCount,
     onSelectOrder,
+    onAddDemoDraftOrders,
     onDraftChange,
     onAddDraftOrder,
     onRemoveDraftOrder,
@@ -92,6 +154,7 @@ export default function OrderManagementPanel({
     onSetMapInteractionMode
 }: OrderManagementPanelProps) {
     const [jsonText, setJsonText] = useState('');
+    const [demoHint, setDemoHint] = useState<string | null>(null);
     const systemOrders = Object.values(orders);
     const canAddDraft = Boolean(draftOrder.orderId.trim() && draftOrder.pickup && draftOrder.dropoff && draftOrder.payloadKg > 0);
     const interactionText = mapInteractionMode === 'select_pickup'
@@ -114,6 +177,47 @@ export default function OrderManagementPanel({
                     Hãy bắt đầu mô phỏng trước khi gửi đơn hàng.
                 </div>
             )}
+
+            <section className="rounded border border-slate-200 bg-white p-3">
+                <h2 className="border-b border-slate-100 pb-2 text-xs font-bold uppercase text-slate-500">Kịch bản demo</h2>
+                <p className="mt-3 text-xs leading-relaxed text-slate-600">
+                    Tạo nhanh các đơn hàng mẫu để kiểm thử dispatch và mission runtime.
+                </p>
+                <div className="mt-3 grid grid-cols-1 gap-2">
+                    <button
+                        onClick={() => {
+                            setDemoHint(activeSimId ? 'Đã thêm 1 đơn mẫu vào danh sách nháp.' : 'Hãy bắt đầu mô phỏng trước khi gửi đơn demo.');
+                            onAddDemoDraftOrders(demoScenarios.single);
+                        }}
+                        className="rounded border border-blue-200 bg-blue-50 px-3 py-2 text-left text-xs font-bold text-blue-700 hover:bg-blue-100"
+                    >
+                        Demo: 1 đơn / 1 UAV
+                    </button>
+                    <button
+                        onClick={() => {
+                            setDemoHint(!activeSimId
+                                ? 'Hãy bắt đầu mô phỏng trước. Nên chạy với 3 UAV cho kịch bản 5 đơn.'
+                                : droneCount < 3
+                                    ? 'Nên chạy với 3 UAV cho kịch bản 5 đơn.'
+                                    : 'Đã thêm 5 đơn mẫu vào danh sách nháp.');
+                            onAddDemoDraftOrders(demoScenarios.multi);
+                        }}
+                        className="rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-left text-xs font-bold text-emerald-700 hover:bg-emerald-100"
+                    >
+                        Demo: 5 đơn / 3 UAV
+                    </button>
+                    <button
+                        onClick={() => {
+                            setDemoHint(activeSimId ? 'Đơn payload quá nặng dùng để kiểm thử validate lỗi.' : 'Hãy bắt đầu mô phỏng trước khi gửi đơn demo.');
+                            onAddDemoDraftOrders(demoScenarios.overweight);
+                        }}
+                        className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-left text-xs font-bold text-amber-700 hover:bg-amber-100"
+                    >
+                        Demo: Payload quá nặng
+                    </button>
+                </div>
+                {demoHint && <p className="mt-2 text-xs font-semibold text-slate-500">{demoHint}</p>}
+            </section>
 
             <section className="rounded border border-slate-200 bg-white p-3">
                 <h2 className="border-b border-slate-100 pb-2 text-xs font-bold uppercase text-slate-500">Đơn hàng trong hệ thống</h2>
