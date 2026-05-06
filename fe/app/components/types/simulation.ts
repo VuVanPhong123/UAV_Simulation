@@ -34,6 +34,10 @@ export type DroneTelemetry = {
     isRaining?: boolean;
     currentPathIndex?: number;
     pathLength?: number;
+    currentOrderId?: string | null;
+    currentMissionId?: string | null;
+    currentTargetType?: string | null;
+    payloadKg?: number;
 };
 
 export type MapConfig = {
@@ -121,6 +125,10 @@ export type DeliveryOrder = {
     created_at?: number;
     updatedAt?: number;
     updated_at?: number;
+    completedAt?: number | null;
+    completed_at?: number | null;
+    failedReason?: string | null;
+    failed_reason?: string | null;
 };
 
 export type Mission = {
@@ -135,10 +143,20 @@ export type Mission = {
     dropoffNode?: [number, number] | null;
     dropoff_node?: [number, number] | null;
     status: MissionStatus;
+    pickupPath?: Array<{ node?: [number, number] | null; altitude?: number }>;
+    pickup_path?: Array<{ node?: [number, number] | null; altitude?: number }>;
+    dropoffPath?: Array<{ node?: [number, number] | null; altitude?: number }>;
+    dropoff_path?: Array<{ node?: [number, number] | null; altitude?: number }>;
     createdAt?: number;
     created_at?: number;
     updatedAt?: number;
     updated_at?: number;
+    startedAt?: number | null;
+    started_at?: number | null;
+    completedAt?: number | null;
+    completed_at?: number | null;
+    failedReason?: string | null;
+    failed_reason?: string | null;
 };
 
 export type OrdersById = Record<string, DeliveryOrder>;

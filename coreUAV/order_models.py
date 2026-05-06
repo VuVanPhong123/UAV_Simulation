@@ -19,6 +19,8 @@ class DeliveryOrder:
     validation_errors: list = field(default_factory=list)
     created_at: int = 0
     updated_at: int = 0
+    completed_at: int | None = None
+    failed_reason: str | None = None
 
 
 @dataclass
@@ -29,14 +31,35 @@ class Mission:
     pickup_node: tuple | None = None
     dropoff_node: tuple | None = None
     status: str = MissionStatus.PLANNED.value
+    pickup_path: list = field(default_factory=list)
+    dropoff_path: list = field(default_factory=list)
     created_at: int = 0
     updated_at: int = 0
+    started_at: int | None = None
+    completed_at: int | None = None
+    failed_reason: str | None = None
 
 
 def _node_to_list(node):
     if node is None:
         return None
     return [int(node[0]), int(node[1])]
+
+
+def _serialize_path_point(point):
+    if isinstance(point, dict):
+        node = point.get("node")
+        return {
+            "node": _node_to_list(node),
+            "altitude": float(point.get("altitude", 0.0)),
+        }
+    return {
+        "node": _node_to_list(point),
+    }
+
+
+def _serialize_path(path):
+    return [_serialize_path_point(point) for point in (path or [])]
 
 
 def serialize_order(order, graph=None, transformer=None):
@@ -67,6 +90,10 @@ def serialize_order(order, graph=None, transformer=None):
         "created_at": int(order.created_at),
         "updatedAt": int(order.updated_at),
         "updated_at": int(order.updated_at),
+        "completedAt": order.completed_at,
+        "completed_at": order.completed_at,
+        "failedReason": order.failed_reason,
+        "failed_reason": order.failed_reason,
     }
     return payload
 
@@ -86,8 +113,18 @@ def serialize_mission(mission):
         "dropoffNode": dropoff_node,
         "dropoff_node": dropoff_node,
         "status": mission.status,
+        "pickupPath": _serialize_path(mission.pickup_path),
+        "pickup_path": _serialize_path(mission.pickup_path),
+        "dropoffPath": _serialize_path(mission.dropoff_path),
+        "dropoff_path": _serialize_path(mission.dropoff_path),
         "createdAt": int(mission.created_at),
         "created_at": int(mission.created_at),
         "updatedAt": int(mission.updated_at),
         "updated_at": int(mission.updated_at),
+        "startedAt": mission.started_at,
+        "started_at": mission.started_at,
+        "completedAt": mission.completed_at,
+        "completed_at": mission.completed_at,
+        "failedReason": mission.failed_reason,
+        "failed_reason": mission.failed_reason,
     }

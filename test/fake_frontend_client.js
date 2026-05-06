@@ -148,11 +148,11 @@ function findOrder(message, orderId) {
 function isValidOrderPhase8(message, orderId) {
   const order = findOrder(message, orderId);
   if (!order) return false;
-  if (!['pending', 'assigned', 'failed'].includes(order.status)) return false;
+  if (!['pending', 'assigned', 'going_to_pickup', 'picked_up', 'delivering', 'completed', 'failed'].includes(order.status)) return false;
   if (order.status === 'failed') {
     return Array.isArray(order.validationErrors || order.validation_errors);
   }
-  if (order.status === 'assigned') {
+  if (['assigned', 'going_to_pickup', 'picked_up', 'delivering', 'completed'].includes(order.status)) {
     return Boolean((order.assignedDroneId || order.assigned_drone_id) && (order.missionId || order.mission_id));
   }
   return Array.isArray(order.pickupNode || order.pickup_node)
@@ -169,6 +169,12 @@ function findMission(message, missionId) {
     return payload.missions.find((mission) => (mission.missionId || mission.mission_id) === missionId) || null;
   }
   return null;
+}
+
+function missionContextTelemetry(message, orderId, missionId) {
+  if (message.type !== 'telemetry') return false;
+  const payload = telemetryPayload(message);
+  return payload.currentOrderId === orderId || payload.currentMissionId === missionId;
 }
 
 async function runScenario() {
@@ -236,14 +242,14 @@ async function runScenario() {
       message.simId === simId
       && ['order_update', 'order_state'].includes(message.type)
       && isValidOrderPhase8(message, 'order_test_1')
-      && findOrder(message, 'order_test_1').status === 'assigned'
+      && ['assigned', 'going_to_pickup'].includes(findOrder(message, 'order_test_1').status)
     ),
     60000,
     'order auto dispatch accepted'
   );
   const dispatchedOrder = findOrder(dispatchedOrderMessage, 'order_test_1');
-  if (!dispatchedOrder || dispatchedOrder.status !== 'assigned') {
-    fail('order auto dispatch accepted', `expected assigned order, got ${dispatchedOrder && dispatchedOrder.status}`);
+  if (!dispatchedOrder || !['assigned', 'going_to_pickup'].includes(dispatchedOrder.status)) {
+    fail('order auto dispatch accepted', `expected mission order, got ${dispatchedOrder && dispatchedOrder.status}`);
   }
   pass('order auto dispatch accepted');
 
@@ -253,11 +259,28 @@ async function runScenario() {
       message.simId === simId
       && ['mission_update', 'order_state'].includes(message.type)
       && findMission(message, missionId)
+      && ['planned', 'to_pickup'].includes(findMission(message, missionId).status)
     ),
     60000,
-    'mission created'
+    'mission runtime started'
   );
-  pass('mission created');
+  await waitFor(
+    (message) => message.simId === simId && missionContextTelemetry(message, 'order_test_1', missionId),
+    60000,
+    'mission telemetry context'
+  );
+  pass('mission runtime started');
+
+  await waitFor(
+    (message) => {
+      if (message.simId !== simId || !['order_update', 'order_state'].includes(message.type)) return false;
+      const order = findOrder(message, 'order_test_1');
+      return order && ['picked_up', 'delivering', 'completed'].includes(order.status);
+    },
+    180000,
+    'pickup/dropoff mission progress observed'
+  );
+  pass('pickup/dropoff mission progress observed');
 
   clearBacklog();
   send({

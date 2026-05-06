@@ -42,6 +42,8 @@ class DroneAgent:
     current_order_id: str | None = None
     current_mission_id: str | None = None
     available: bool = True
+    return_target_node_after_charging: tuple | None = None
+    return_target_type_after_charging: str | None = None
 
 
 class SimulationWorld:
@@ -61,6 +63,8 @@ class SimulationWorld:
         self.is_raining = False
         self.step_count = 0
         self.pending_events = []
+        self.pending_order_updates = []
+        self.pending_mission_updates = []
         self.obstacles = []
         self.proximity_cooldowns = {}
         self.drone_count = max(1, min(5, int(drone_count or 1)))
@@ -76,6 +80,8 @@ class SimulationWorld:
             self.drone_count = max(1, min(5, int(drone_count or 1)))
         self.step_count = 0
         self.pending_events = []
+        self.pending_order_updates = []
+        self.pending_mission_updates = []
         self.obstacles = []
         self.proximity_cooldowns = {}
         self.orders = {}
@@ -107,6 +113,8 @@ class SimulationWorld:
                 current_order_id=None,
                 current_mission_id=None,
                 available=True,
+                return_target_node_after_charging=None,
+                return_target_type_after_charging=None,
             )
             self.agents[drone_id] = agent
             self._replan_agent(agent, EventCode.PATH_PLANNED.value, "Initial path planned.")
@@ -254,8 +262,13 @@ class SimulationWorld:
                 )
                 continue
 
-            now = self._now_ms()
             agent = best_candidate["agent"]
+            if agent.drone.pos is not None:
+                agent.drone.node = self._current_grid_node(agent)
+            raw_pickup_path = self._plan_path(agent.drone.node, order.pickup_node, agent.drone.altitude)
+            pickup_path = self.graph.smooth_path(raw_pickup_path, agent.drone.altitude)
+
+            now = self._now_ms()
             mission_id = self._next_mission_id()
             mission = Mission(
                 mission_id=mission_id,
@@ -263,13 +276,15 @@ class SimulationWorld:
                 drone_id=agent.drone_id,
                 pickup_node=order.pickup_node,
                 dropoff_node=order.dropoff_node,
-                status=MissionStatus.PLANNED.value,
+                status=MissionStatus.TO_PICKUP.value,
+                pickup_path=pickup_path,
                 created_at=now,
                 updated_at=now,
+                started_at=now,
             )
             self.missions[mission_id] = mission
 
-            order.status = OrderStatus.ASSIGNED.value
+            order.status = OrderStatus.GOING_TO_PICKUP.value
             order.assigned_drone_id = agent.drone_id
             order.mission_id = mission_id
             order.updated_at = now
@@ -277,10 +292,37 @@ class SimulationWorld:
             agent.current_order_id = order.order_id
             agent.current_mission_id = mission_id
             agent.available = False
+            agent.current_target_node = order.pickup_node
+            agent.current_target_type = "pickup"
+
+            if not pickup_path:
+                self._fail_current_mission(agent, "No safe path to pickup.")
+                self.queue_event(
+                    agent.drone_id,
+                    EventLevel.ERROR.value,
+                    EventCode.DISPATCH_FAILED.value,
+                    f"Dispatch failed for order {order.order_id}: no safe path to pickup.",
+                )
+                changed_orders.append(serialize_order(order))
+                changed_missions.append(serialize_mission(mission))
+                continue
+
+            agent.path = pickup_path
+            agent.path_index = 0
+            agent.current_target_altitude = self._next_target_altitude(agent)
+            agent.drone.status = DroneStatus.FLYING.value
 
             assigned_count += 1
+            self.queue_order_update(order)
+            self.queue_mission_update(mission)
             changed_orders.append(serialize_order(order))
             changed_missions.append(serialize_mission(mission))
+            self.queue_event(
+                agent.drone_id,
+                EventLevel.INFO.value,
+                EventCode.MISSION_STARTED.value,
+                f"Mission {mission_id} started for order {order.order_id}.",
+            )
             self.queue_event(
                 agent.drone_id,
                 EventLevel.INFO.value,
@@ -292,6 +334,12 @@ class SimulationWorld:
                 EventLevel.INFO.value,
                 EventCode.MISSION_CREATED.value,
                 f"Mission {mission_id} created for order {order.order_id}.",
+            )
+            self.queue_event(
+                agent.drone_id,
+                EventLevel.INFO.value,
+                EventCode.MISSION_TO_PICKUP.value,
+                f"{agent.drone_id} flying to pickup for order {order.order_id}.",
             )
 
         return {
@@ -452,6 +500,24 @@ class SimulationWorld:
         self.pending_events = []
         return events
 
+    def queue_order_update(self, order):
+        if order is not None:
+            self.pending_order_updates.append(serialize_order(order))
+
+    def queue_mission_update(self, mission):
+        if mission is not None:
+            self.pending_mission_updates.append(serialize_mission(mission))
+
+    def drain_order_updates(self):
+        updates = self.pending_order_updates
+        self.pending_order_updates = []
+        return updates
+
+    def drain_mission_updates(self):
+        updates = self.pending_mission_updates
+        self.pending_mission_updates = []
+        return updates
+
     def get_all_agent_ids(self):
         return list(self.agents.keys())
 
@@ -509,8 +575,122 @@ class SimulationWorld:
             return True
 
         agent.drone.status = DroneStatus.FAILED.value
+        if agent.current_mission_id:
+            self._fail_current_mission(agent, "No safe path available.")
         self.queue_event(agent.drone_id, EventLevel.ERROR.value, EventCode.DELIVERY_FAILED.value, "No safe path available.")
         return False
+
+    def _fail_current_mission(self, agent, reason):
+        now = self._now_ms()
+        order = self.orders.get(agent.current_order_id) if agent.current_order_id else None
+        mission = self.missions.get(agent.current_mission_id) if agent.current_mission_id else None
+
+        if order:
+            order.status = OrderStatus.FAILED.value
+            order.failed_reason = reason
+            order.updated_at = now
+            self.queue_order_update(order)
+            self.queue_event(
+                order.order_id,
+                EventLevel.ERROR.value,
+                EventCode.ORDER_FAILED.value,
+                f"Order {order.order_id} failed: {reason}",
+            )
+
+        if mission:
+            mission.status = MissionStatus.FAILED.value
+            mission.failed_reason = reason
+            mission.updated_at = now
+            self.queue_mission_update(mission)
+            self.queue_event(
+                mission.drone_id or agent.drone_id,
+                EventLevel.ERROR.value,
+                EventCode.MISSION_FAILED.value,
+                f"Mission {mission.mission_id} failed: {reason}",
+            )
+
+        agent.drone.payload_weight = 0.0
+        agent.available = True
+        agent.current_order_id = None
+        agent.current_mission_id = None
+        agent.current_target_type = "idle"
+        agent.path = []
+        agent.path_index = 0
+        agent.return_target_node_after_charging = None
+        agent.return_target_type_after_charging = None
+
+    def _handle_pickup_arrival(self, agent):
+        order = self.orders.get(agent.current_order_id)
+        mission = self.missions.get(agent.current_mission_id)
+        if not order or not mission:
+            self._fail_current_mission(agent, "Mission state missing at pickup.")
+            return
+
+        now = self._now_ms()
+        order.status = OrderStatus.PICKED_UP.value
+        order.updated_at = now
+        mission.status = MissionStatus.PICKUP_ARRIVED.value
+        mission.updated_at = now
+        agent.drone.payload_weight = float(order.payload_kg)
+        self.queue_order_update(order)
+        self.queue_mission_update(mission)
+        self.queue_event(agent.drone_id, EventLevel.INFO.value, EventCode.PICKUP_ARRIVED.value, f"Pickup reached for order {order.order_id}.")
+        self.queue_event(agent.drone_id, EventLevel.SUCCESS.value, EventCode.PACKAGE_PICKED_UP.value, f"Package picked up for order {order.order_id}.")
+
+        order.status = OrderStatus.DELIVERING.value
+        order.updated_at = now
+        mission.status = MissionStatus.TO_DROPOFF.value
+        mission.updated_at = now
+        agent.current_target_node = order.dropoff_node
+        agent.current_target_type = "dropoff"
+        agent.drone.node = order.pickup_node
+        raw_path = self._plan_path(agent.drone.node, order.dropoff_node, agent.drone.altitude)
+        dropoff_path = self.graph.smooth_path(raw_path, agent.drone.altitude)
+        mission.dropoff_path = dropoff_path
+
+        if not dropoff_path:
+            self._fail_current_mission(agent, "No safe path from pickup to dropoff.")
+            return
+
+        agent.path = dropoff_path
+        agent.path_index = 0
+        agent.current_target_altitude = self._next_target_altitude(agent)
+        agent.drone.status = DroneStatus.FLYING.value
+        self.queue_order_update(order)
+        self.queue_mission_update(mission)
+        self.queue_event(agent.drone_id, EventLevel.INFO.value, EventCode.MISSION_TO_DROPOFF.value, f"{agent.drone_id} flying to dropoff for order {order.order_id}.")
+
+    def _handle_dropoff_arrival(self, agent):
+        order = self.orders.get(agent.current_order_id)
+        mission = self.missions.get(agent.current_mission_id)
+        if not order or not mission:
+            self._fail_current_mission(agent, "Mission state missing at dropoff.")
+            return
+
+        now = self._now_ms()
+        order.status = OrderStatus.COMPLETED.value
+        order.completed_at = now
+        order.updated_at = now
+        mission.status = MissionStatus.COMPLETED.value
+        mission.completed_at = now
+        mission.updated_at = now
+
+        agent.drone.payload_weight = 0.0
+        agent.current_order_id = None
+        agent.current_mission_id = None
+        agent.available = True
+        agent.current_target_type = "idle"
+        agent.path = []
+        agent.path_index = 0
+        agent.drone.status = DroneStatus.IDLE.value
+        agent.return_target_node_after_charging = None
+        agent.return_target_type_after_charging = None
+
+        self.queue_order_update(order)
+        self.queue_mission_update(mission)
+        self.queue_event(agent.drone_id, EventLevel.SUCCESS.value, EventCode.DROPOFF_ARRIVED.value, f"Dropoff reached for order {order.order_id}.")
+        self.queue_event(order.order_id, EventLevel.SUCCESS.value, EventCode.ORDER_COMPLETED.value, f"Order {order.order_id} completed.")
+        self.dispatch_pending_orders()
 
     def update_weather(self, wind_dir, wind_speed, ambient_temp, is_raining=False, replan=True):
         self.wind_dir = float(wind_dir)
@@ -521,6 +701,8 @@ class SimulationWorld:
             return
         for agent in self.get_agents():
             if agent.drone.status in TERMINAL_STATUSES or agent.drone.status == DroneStatus.CHARGING.value:
+                continue
+            if agent.current_target_type == "idle":
                 continue
             agent.drone.node = self._current_grid_node(agent)
             agent.drone.status = DroneStatus.PLANNING.value
@@ -589,6 +771,8 @@ class SimulationWorld:
                 self.queue_event(agent.drone_id, EventLevel.INFO.value, EventCode.PATH_REPLANNED.value, "Path replanned after altitude pop-up.")
             else:
                 agent.drone.status = DroneStatus.EMERGENCY_LANDING.value
+                if agent.current_mission_id:
+                    self._fail_current_mission(agent, "No safe path after obstacle detection.")
                 self.queue_event(agent.drone_id, EventLevel.ERROR.value, EventCode.EMERGENCY_LANDING.value, "No safe path after obstacle detection.")
         else:
             agent.avoid_timer -= dt
@@ -623,11 +807,19 @@ class SimulationWorld:
         if agent.drone.status != DroneStatus.FLYING.value:
             return
         self.queue_event(agent.drone_id, EventLevel.SUCCESS.value, EventCode.CHARGING_COMPLETED.value, "Charging completed.")
-        agent.current_target_node = agent.goal_node
-        agent.current_target_type = "goal"
+        if agent.return_target_node_after_charging is not None:
+            agent.current_target_node = agent.return_target_node_after_charging
+            agent.current_target_type = agent.return_target_type_after_charging or "goal"
+            agent.return_target_node_after_charging = None
+            agent.return_target_type_after_charging = None
+            event_message = "Path replanned from charging station to mission target."
+        else:
+            agent.current_target_node = agent.goal_node
+            agent.current_target_type = "goal"
+            event_message = "Path replanned from charging station to goal."
         agent.charging_mode = False
         agent.drone.status = DroneStatus.PLANNING.value
-        self._replan_agent(agent, EventCode.PATH_REPLANNED.value, "Path replanned from charging station to goal.")
+        self._replan_agent(agent, EventCode.PATH_REPLANNED.value, event_message)
 
     def _maybe_reroute_to_charging(self, agent):
         if (
@@ -639,6 +831,8 @@ class SimulationWorld:
         station_node, station_path, station_cost = self._find_best_charging_station(agent)
         if station_node and station_path:
             agent.charging_mode = True
+            agent.return_target_node_after_charging = agent.current_target_node
+            agent.return_target_type_after_charging = agent.current_target_type
             agent.current_target_node = station_node
             agent.current_target_type = "charging_station"
             agent.path = self.graph.smooth_path(station_path, agent.drone.altitude)
@@ -653,6 +847,8 @@ class SimulationWorld:
             )
         else:
             agent.drone.status = DroneStatus.EMERGENCY_LANDING.value
+            if agent.current_mission_id:
+                self._fail_current_mission(agent, "Low battery and no reachable charging station.")
             self.queue_event(agent.drone_id, EventLevel.ERROR.value, EventCode.EMERGENCY_LANDING.value, "Low battery and no reachable charging station.")
 
     def _apply_proximity_slowdown(self):
@@ -749,12 +945,23 @@ class SimulationWorld:
                 agent.num_charging_stops += 1
                 agent.drone.status = DroneStatus.CHARGING.value
                 self.queue_event(agent.drone_id, EventLevel.INFO.value, EventCode.CHARGING_STARTED.value, "Charging started.")
+            elif agent.current_target_type == "pickup":
+                self._handle_pickup_arrival(agent)
+            elif agent.current_target_type == "dropoff":
+                self._handle_dropoff_arrival(agent)
+            elif agent.current_target_type == "idle":
+                agent.drone.status = DroneStatus.IDLE.value
             else:
                 agent.drone.status = DroneStatus.SUCCESS.value
                 self.queue_event(agent.drone_id, EventLevel.SUCCESS.value, EventCode.DELIVERY_SUCCESS.value, "Delivery completed successfully.")
         elif not agent.path or agent.path_index >= len(agent.path) - 1:
-            agent.drone.status = DroneStatus.FAILED.value
-            self.queue_event(agent.drone_id, EventLevel.ERROR.value, EventCode.DELIVERY_FAILED.value, "Path ended before reaching target.")
+            if agent.current_target_type == "idle":
+                agent.drone.status = DroneStatus.IDLE.value
+            else:
+                agent.drone.status = DroneStatus.FAILED.value
+                if agent.current_mission_id:
+                    self._fail_current_mission(agent, "Path ended before reaching target.")
+                self.queue_event(agent.drone_id, EventLevel.ERROR.value, EventCode.DELIVERY_FAILED.value, "Path ended before reaching target.")
 
         if agent.drone.status == DroneStatus.FLYING.value:
             is_shielded = self.graph.check_wind_shadow(agent.drone.node, self.wind_dir, agent.drone.altitude)
@@ -770,6 +977,8 @@ class SimulationWorld:
 
         if agent.drone.battery <= 0:
             agent.drone.status = DroneStatus.EMERGENCY_LANDING.value
+            if agent.current_mission_id:
+                self._fail_current_mission(agent, "Battery depleted.")
             self.queue_event(agent.drone_id, EventLevel.ERROR.value, EventCode.EMERGENCY_LANDING.value, "Battery depleted. Emergency landing.")
 
         agent.drone.update_temperature(dt, self.ambient_temp)
@@ -796,6 +1005,8 @@ class SimulationWorld:
             for agent in self.get_agents():
                 if agent.drone.status not in TERMINAL_STATUSES:
                     agent.drone.status = DroneStatus.FAILED.value
+                    if agent.current_mission_id:
+                        self._fail_current_mission(agent, "Simulation reached max steps.")
                     self.queue_event(agent.drone_id, EventLevel.ERROR.value, EventCode.DELIVERY_FAILED.value, "Simulation reached max steps.")
 
     def pause(self):
@@ -812,11 +1023,54 @@ class SimulationWorld:
         for agent in self.get_agents():
             if agent.drone.status not in TERMINAL_STATUSES:
                 agent.drone.status = DroneStatus.FAILED.value
+                if agent.current_mission_id:
+                    self._fail_current_mission(agent, "Simulation stopped.")
 
     def is_all_done(self):
+        if self.orders:
+            terminal_order_statuses = {
+                OrderStatus.COMPLETED.value,
+                OrderStatus.FAILED.value,
+                OrderStatus.CANCELED.value,
+            }
+            active_mission_statuses = {
+                MissionStatus.PLANNED.value,
+                MissionStatus.TO_PICKUP.value,
+                MissionStatus.PICKUP_ARRIVED.value,
+                MissionStatus.TO_DROPOFF.value,
+            }
+            return (
+                all(order.status in terminal_order_statuses for order in self.orders.values())
+                and not any(mission.status in active_mission_statuses for mission in self.missions.values())
+            )
         return all(agent.drone.status in TERMINAL_STATUSES for agent in self.get_agents())
 
     def final_status(self):
+        if self.orders:
+            terminal_order_statuses = {
+                OrderStatus.COMPLETED.value,
+                OrderStatus.FAILED.value,
+                OrderStatus.CANCELED.value,
+            }
+            active_mission_statuses = {
+                MissionStatus.PLANNED.value,
+                MissionStatus.TO_PICKUP.value,
+                MissionStatus.PICKUP_ARRIVED.value,
+                MissionStatus.TO_DROPOFF.value,
+            }
+            orders = list(self.orders.values())
+            has_active_mission = any(mission.status in active_mission_statuses for mission in self.missions.values())
+            has_pending = any(order.status == OrderStatus.PENDING.value for order in orders)
+            if orders and all(order.status in (OrderStatus.COMPLETED.value, OrderStatus.CANCELED.value) for order in orders):
+                return "success"
+            if (
+                any(order.status == OrderStatus.FAILED.value for order in orders)
+                and not has_active_mission
+                and not has_pending
+                and all(order.status in terminal_order_statuses for order in orders)
+            ):
+                return "failed"
+            return "running"
         statuses = [agent.drone.status for agent in self.get_agents()]
         if statuses and all(status == DroneStatus.SUCCESS.value for status in statuses):
             return "success"

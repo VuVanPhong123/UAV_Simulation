@@ -138,6 +138,10 @@ def main():
             "isRaining": bool(world.is_raining),
             "currentPathIndex": int(agent.path_index),
             "pathLength": int(len(agent.path)),
+            "currentOrderId": agent.current_order_id,
+            "currentMissionId": agent.current_mission_id,
+            "currentTargetType": agent.current_target_type,
+            "payloadKg": float(agent.drone.payload_weight),
             "step": step,
             "terminated": terminated
         }
@@ -167,6 +171,10 @@ def main():
             "isRaining": payload["isRaining"],
             "currentPathIndex": payload["currentPathIndex"],
             "pathLength": payload["pathLength"],
+            "currentOrderId": payload["currentOrderId"],
+            "currentMissionId": payload["currentMissionId"],
+            "currentTargetType": payload["currentTargetType"],
+            "payloadKg": payload["payloadKg"],
             "terminated": payload["terminated"]
         }))
 
@@ -290,6 +298,14 @@ def main():
         for evt in world.drain_events():
             send_event(evt["level"], evt["code"], evt["message"], evt.get("droneId", SYSTEM_DRONE_ID))
 
+    def drain_order_mission_updates():
+        if world is None:
+            return
+        for order_dict in world.drain_order_updates():
+            send_order_update(order_dict)
+        for mission_dict in world.drain_mission_updates():
+            send_mission_update(mission_dict)
+
     def reject_wrong_sim(data):
         if data.get("simId") != sim_id:
             try:
@@ -306,6 +322,7 @@ def main():
         }
 
     def process_order_batch(batch):
+        nonlocal last_path_ids
         auto_dispatch = True
         if isinstance(batch, dict) and "autoDispatch" in batch:
             auto_dispatch = parse_bool(batch.get("autoDispatch"))
@@ -317,15 +334,22 @@ def main():
             send_order_update(order_dict)
         for mission_dict in updates.get("missions", []):
             send_mission_update(mission_dict)
+        drain_order_mission_updates()
+        send_all_planned_paths()
+        last_path_ids = mark_current_paths()
         send_order_state()
         drain_world_events()
 
     def process_dispatch_orders():
+        nonlocal last_path_ids
         updates = world.dispatch_pending_orders()
         for order_dict in updates.get("orders", []):
             send_order_update(order_dict)
         for mission_dict in updates.get("missions", []):
             send_mission_update(mission_dict)
+        drain_order_mission_updates()
+        send_all_planned_paths()
+        last_path_ids = mark_current_paths()
         send_order_state()
         drain_world_events()
 
@@ -498,6 +522,7 @@ def main():
                 world.step()
                 step += 1
                 drain_world_events()
+                drain_order_mission_updates()
                 telemetry_counter += 1
                 if telemetry_counter >= telemetry_every_n_steps:
                     send_all_telemetry()
