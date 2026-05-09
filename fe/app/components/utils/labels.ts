@@ -41,11 +41,20 @@ export function translateMissionStatus(status?: string) {
 
 export function translateSimulationStatus(status?: string) {
     const labels: Record<string, string> = {
-        idle: 'Chờ',
+        idle: 'Sẵn sàng',
         running: 'Đang chạy',
         paused: 'Tạm dừng',
         stopped: 'Đã dừng',
-        failed: 'Thất bại'
+        failed: 'Lỗi'
+    };
+    return status ? labels[status] ?? status : '--';
+}
+
+export function translateServerStatus(status?: string) {
+    const labels: Record<string, string> = {
+        connecting: 'Đang kết nối',
+        connected: 'Đã kết nối',
+        disconnected: 'Mất kết nối'
     };
     return status ? labels[status] ?? status : '--';
 }
@@ -76,7 +85,7 @@ export function translateTargetType(targetType?: string | null) {
         pickup: 'Điểm lấy hàng',
         dropoff: 'Điểm giao hàng',
         charging_station: 'Trạm sạc',
-        goal: 'Điểm đích mô phỏng',
+        goal: 'Đích cũ',
         idle: 'Chờ nhiệm vụ',
         depot: 'Kho UAV'
     };
@@ -96,7 +105,7 @@ export function translateEventFilter(filter: string) {
         all: 'Tất cả',
         selected_drone: 'UAV đang chọn',
         selected_order: 'Đơn đang chọn',
-        selected_mission: 'Mission đang chọn'
+        selected_mission: 'Nhiệm vụ đang chọn'
     };
     return labels[filter] ?? filter;
 }

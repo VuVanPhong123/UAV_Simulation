@@ -169,23 +169,23 @@ export default function MissionProgressPanel({
                 >
                     {value(orderId)}
                 </button>
-                <span className="text-slate-500">Mission</span>
+                <span className="text-slate-500">Nhiệm vụ</span>
                 <span className="truncate text-right font-mono">{value(missionId)}</span>
-                <span className="text-slate-500">Payload</span>
+                <span className="text-slate-500">Tải trọng</span>
                 <span className="truncate text-right font-mono">{formatPayloadKg(payloadKg)}</span>
-                <span className="text-slate-500">Target hiện tại</span>
+                <span className="text-slate-500">Điểm đến hiện tại</span>
                 <span className="truncate text-right">{translateTargetType(drone?.currentTargetType)}</span>
                 <span className="text-slate-500">Tiến độ</span>
                 <span className="truncate text-right">{progressLabel(order, mission)}</span>
                 <span className="text-slate-500">Trạng thái đơn</span>
                 <span className="truncate text-right">{translateOrderStatus(order?.status)}</span>
-                <span className="text-slate-500">Trạng thái mission</span>
+                <span className="text-slate-500">Trạng thái nhiệm vụ</span>
                 <span className="truncate text-right">{translateMissionStatus(mission?.status)}</span>
                 <span className="text-slate-500">Trạng thái UAV</span>
                 <span className="truncate text-right">{translateDroneStatus(drone?.status)}</span>
-                <span className="text-slate-500">Còn lại</span>
+                <span className="text-slate-500">Quãng đường còn lại</span>
                 <span className="truncate text-right font-mono">{formatDistanceMeters(remainingMeters)}</span>
-                <span className="text-slate-500">ETA</span>
+                <span className="text-slate-500">Thời gian dự kiến</span>
                 <span className="truncate text-right font-mono">{formatEtaSeconds(etaSeconds)}</span>
             </div>
         </section>

@@ -11,11 +11,11 @@ type ControlPanelProps = {
     droneCount: number;
     canStartWithOrders?: boolean;
     startHint?: string;
-    onDroneCountChange: (value: number) => void;
+    onDroneCountChange?: (value: number) => void;
     onStart: () => void;
     onPause: () => void;
     onResume: () => void;
-    onStop: () => void;
+    onStop?: () => void;
     onReset: () => void;
 };
 
@@ -54,11 +54,9 @@ export default function ControlPanel({
     droneCount,
     canStartWithOrders = true,
     startHint,
-    onDroneCountChange,
     onStart,
     onPause,
     onResume,
-    onStop,
     onReset
 }: ControlPanelProps) {
     const startDisabled = serverStatus !== 'connected' || workerStatus !== 'idle' || simulationStatus === 'running' || !canStartWithOrders;
@@ -69,26 +67,12 @@ export default function ControlPanel({
     return (
         <section className="rounded border border-slate-200 bg-white p-3">
             <h2 className="border-b border-slate-100 pb-2 text-xs font-bold uppercase text-slate-500">Điều khiển mô phỏng</h2>
-            <label className="mt-3 block text-xs font-semibold text-slate-600">
-                Số UAV: {droneCount}
-                <input
-                    className="mt-1 w-full"
-                    type="range"
-                    min="1"
-                    max="5"
-                    value={droneCount}
-                    disabled={Boolean(activeSimId)}
-                    onChange={event => onDroneCountChange(Number(event.target.value))}
-                />
-            </label>
+            <p className="mt-3 text-xs font-semibold text-slate-500">Số UAV mặc định: {droneCount}</p>
             <div className="mt-3 grid grid-cols-2 gap-2">
                 <Button variant="primary" disabled={startDisabled} onClick={onStart}>Bắt đầu</Button>
                 <Button disabled={pauseDisabled} onClick={onPause}>Tạm dừng</Button>
                 <Button disabled={resumeDisabled} onClick={onResume}>Tiếp tục</Button>
                 <Button disabled={commandDisabled} onClick={onReset}>Đặt lại</Button>
-                <div className="col-span-2">
-                    <Button variant="danger" disabled={commandDisabled} onClick={onStop}>Dừng</Button>
-                </div>
             </div>
             {startDisabled && startHint && (
                 <p className="mt-2 text-xs font-semibold text-amber-700">{startHint}</p>

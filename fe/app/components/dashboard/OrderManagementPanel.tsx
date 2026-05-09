@@ -187,7 +187,7 @@ export default function OrderManagementPanel({
             <section className="rounded border border-slate-200 bg-white p-3">
                 <h2 className="border-b border-slate-100 pb-2 text-xs font-bold uppercase text-slate-500">Kịch bản demo</h2>
                 <p className="mt-3 text-xs leading-relaxed text-slate-600">
-                    Tạo nhanh các đơn hàng mẫu để kiểm thử dispatch và mission runtime.
+                    Tạo nhanh các đơn hàng mẫu để kiểm thử phân công và giao hàng.
                 </p>
                 <div className="mt-3 grid grid-cols-1 gap-2">
                     <button
@@ -202,9 +202,9 @@ export default function OrderManagementPanel({
                     <button
                         onClick={() => {
                             setDemoHint(!activeSimId
-                                ? 'Hãy bắt đầu mô phỏng trước. Nên chạy với 3 UAV cho kịch bản 5 đơn.'
+                                ? 'Hãy bắt đầu mô phỏng trước. Hệ thống sẽ dùng 5 UAV mặc định.'
                                 : droneCount < 3
-                                    ? 'Nên chạy với 3 UAV cho kịch bản 5 đơn.'
+                                    ? 'Nên dùng ít nhất 3 UAV cho kịch bản 5 đơn.'
                                     : 'Đã thêm 5 đơn mẫu vào danh sách nháp.');
                             onAddDemoDraftOrders(demoScenarios.multi);
                         }}
@@ -219,7 +219,7 @@ export default function OrderManagementPanel({
                         }}
                         className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-left text-xs font-bold text-amber-700 hover:bg-amber-100"
                     >
-                        Demo: Payload quá nặng
+                        Demo: Tải trọng quá nặng
                     </button>
                 </div>
                 {demoHint && <p className="mt-2 text-xs font-semibold text-slate-500">{demoHint}</p>}
@@ -296,12 +296,12 @@ export default function OrderManagementPanel({
                     </label>
                     <div className="grid grid-cols-2 gap-2">
                         <NumberInput
-                            label="Pickup lat"
+                            label="Vĩ độ lấy hàng"
                             value={draftOrder.pickup ? draftOrder.pickup[0] : ''}
                             onChange={value => onDraftChange('pickup', value === '' ? null : [Number(value), draftOrder.pickup?.[1] ?? 105.8542] as [number, number])}
                         />
                         <NumberInput
-                            label="Pickup lon"
+                            label="Kinh độ lấy hàng"
                             value={draftOrder.pickup ? draftOrder.pickup[1] : ''}
                             onChange={value => onDraftChange('pickup', value === '' ? null : [draftOrder.pickup?.[0] ?? 21.0285, Number(value)] as [number, number])}
                         />
@@ -314,12 +314,12 @@ export default function OrderManagementPanel({
                     </button>
                     <div className="grid grid-cols-2 gap-2">
                         <NumberInput
-                            label="Dropoff lat"
+                            label="Vĩ độ giao hàng"
                             value={draftOrder.dropoff ? draftOrder.dropoff[0] : ''}
                             onChange={value => onDraftChange('dropoff', value === '' ? null : [Number(value), draftOrder.dropoff?.[1] ?? 105.8550] as [number, number])}
                         />
                         <NumberInput
-                            label="Dropoff lon"
+                            label="Kinh độ giao hàng"
                             value={draftOrder.dropoff ? draftOrder.dropoff[1] : ''}
                             onChange={value => onDraftChange('dropoff', value === '' ? null : [draftOrder.dropoff?.[0] ?? 21.0290, Number(value)] as [number, number])}
                         />
@@ -346,7 +346,7 @@ export default function OrderManagementPanel({
                         </label>
                     </div>
                     <NumberInput
-                        label="Deadline timestamp (tuỳ chọn)"
+                        label="Hạn giao hàng (tuỳ chọn)"
                         value={draftOrder.deadlineTs ?? ''}
                         onChange={value => onDraftChange('deadlineTs', value === '' ? null : Number(value))}
                     />

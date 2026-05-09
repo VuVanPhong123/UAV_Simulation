@@ -92,7 +92,7 @@ export default function DroneMissionPanel({
         <section className="rounded border border-slate-200 bg-white p-3">
             <h2 className="border-b border-slate-100 pb-2 text-xs font-bold uppercase text-slate-500">UAV đang chọn</h2>
             <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1 text-xs font-semibold text-slate-700">
-                <span className="text-slate-500">Drone ID</span>
+                <span className="text-slate-500">Mã UAV</span>
                 <span className="truncate text-right font-mono">{droneId}</span>
                 <span className="text-slate-500">Trạng thái UAV</span>
                 <span className="truncate text-right">{translateDroneStatus(selectedDrone.status)}</span>
@@ -102,17 +102,17 @@ export default function DroneMissionPanel({
                 <span className="truncate text-right font-mono">{typeof selectedDrone.altitude === 'number' ? `${selectedDrone.altitude.toFixed(1)} m` : '--'}</span>
                 <span className="text-slate-500">Tốc độ</span>
                 <span className="truncate text-right font-mono">{typeof selectedDrone.speed === 'number' ? `${selectedDrone.speed.toFixed(1)} m/s` : '--'}</span>
-                <span className="text-slate-500">Payload hiện tại</span>
+                <span className="text-slate-500">Tải trọng hiện tại</span>
                 <span className="truncate text-right font-mono">{formatPayloadKg(payloadKg)}</span>
-                <span className="text-slate-500">Current order</span>
+                <span className="text-slate-500">Đơn hiện tại</span>
                 <span className="truncate text-right font-mono">{value(currentOrderId)}</span>
-                <span className="text-slate-500">Current mission</span>
+                <span className="text-slate-500">Nhiệm vụ hiện tại</span>
                 <span className="truncate text-right font-mono">{value(currentMissionId)}</span>
-                <span className="text-slate-500">Target hiện tại</span>
+                <span className="text-slate-500">Điểm đến hiện tại</span>
                 <span className="truncate text-right">{translateTargetType(selectedDrone.currentTargetType)}</span>
-                <span className="text-slate-500">Còn lại</span>
+                <span className="text-slate-500">Quãng đường còn lại</span>
                 <span className="truncate text-right font-mono">{formatDistanceMeters(remainingMeters)}</span>
-                <span className="text-slate-500">ETA</span>
+                <span className="text-slate-500">Thời gian dự kiến</span>
                 <span className="truncate text-right font-mono">{formatEtaSeconds(etaSeconds)}</span>
             </div>
 
@@ -134,7 +134,7 @@ export default function DroneMissionPanel({
                             onClick={() => onSelectMission(missionIdOf(relatedMission))}
                             className="flex w-full items-center justify-between gap-2 text-left"
                         >
-                            <span>Mission liên kết</span>
+                            <span>Nhiệm vụ liên kết</span>
                             <span className="truncate font-mono text-blue-700">
                                 {missionIdOf(relatedMission)} / {translateMissionStatus(relatedMission.status)}
                             </span>

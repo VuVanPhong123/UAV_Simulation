@@ -43,7 +43,7 @@ export default function GcsDashboard() {
     const [obstacleConfig, setObstacleConfig] = useState<ObstacleConfig>({ radius: 8, height: 25, obstacleType: 'unknown' });
     const [dynamicObstacles, setDynamicObstacles] = useState<DynamicObstacle[]>([]);
     const [layers, setLayers] = useState<LayerToggles>(DEFAULT_LAYER_TOGGLES);
-    const [droneCount, setDroneCount] = useState(1);
+    const [droneCount, setDroneCount] = useState(5);
     const [activeSection, setActiveSection] = useState<ActiveDashboardSection>('overview');
     const [draftOrder, setDraftOrder] = useState<DraftOrder>(createDraftOrder);
     const [draftOrders, setDraftOrders] = useState<DraftOrder[]>([]);
@@ -60,7 +60,7 @@ export default function GcsDashboard() {
         && order.payloadKg > 0
     ));
     const canStartWithOrders = droneCount >= 1 && draftOrders.length > 0 && validDraftOrders.length === draftOrders.length;
-    const startHint = 'Cần chọn số UAV và nhập ít nhất một đơn hàng trước khi bắt đầu mô phỏng.';
+    const startHint = 'Cần có ít nhất một đơn hàng hợp lệ trước khi bắt đầu mô phỏng.';
 
     useEffect(() => {
         fetch('/hanoi_buildings.geojson')
@@ -273,6 +273,7 @@ export default function GcsDashboard() {
                 activeSimId={socket.activeSimId}
                 frontendId={socket.frontendId}
                 latencyMs={socket.latencyMs}
+                droneCount={droneCount}
                 drones={socket.drones}
                 orders={socket.orders}
             />

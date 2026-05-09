@@ -65,7 +65,7 @@ export default function OrderDetailPanel({ selectedOrder, relatedMission, relate
             </div>
             {relatedMission && (
                 <div className="mt-3 rounded border border-slate-100 bg-slate-50 p-2 text-xs text-slate-600">
-                    Mission {missionIdOf(relatedMission)} đang ở trạng thái {translateMissionStatus(relatedMission.status)}.
+                    Nhiệm vụ {missionIdOf(relatedMission)} đang ở trạng thái {translateMissionStatus(relatedMission.status)}.
                 </div>
             )}
         </section>

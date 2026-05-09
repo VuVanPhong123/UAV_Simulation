@@ -204,13 +204,15 @@ function filterEvents(
 
 export default function RightDetailPanel(props: RightDetailPanelProps) {
     const droneRows = Object.values(props.drones);
-    const busyDrones = droneRows.filter(drone => (
-        Boolean(drone.currentOrderId || drone.currentMissionId)
-        || (['flying', 'rerouting'].includes(String(drone.status)) && ['pickup', 'dropoff', 'charging_station'].includes(String(drone.currentTargetType)))
-    )).length;
-    const idleDrones = droneRows.filter(drone => drone.status === 'idle' && !drone.currentOrderId && !drone.currentMissionId).length;
-    const chargingDrones = droneRows.filter(drone => drone.status === 'charging').length;
-    const failedDrones = droneRows.filter(drone => ['failed', 'emergency_landing'].includes(String(drone.status))).length;
+    const orderRows = Object.values(props.orders);
+    const totalDrones = droneRows.length || props.droneCount;
+    const idleDrones = droneRows.length
+        ? droneRows.filter(drone => drone.status === 'idle' && !drone.currentOrderId && !drone.currentMissionId).length
+        : totalDrones;
+    const remainingOrders = orderRows.filter(order => !['completed', 'failed', 'canceled'].includes(order.status)).length;
+    const transportingOrders = orderRows.filter(order => ['going_to_pickup', 'picked_up', 'delivering'].includes(order.status)).length;
+    const completedOrders = orderRows.filter(order => order.status === 'completed').length;
+    const failedOrders = orderRows.filter(order => order.status === 'failed').length;
     const selectedDrone = props.selectedDroneId ? props.drones[props.selectedDroneId] ?? props.droneState : props.droneState;
     const selectedOrder = props.selectedOrderId
         ? props.orders[props.selectedOrderId] ?? null
@@ -240,27 +242,16 @@ export default function RightDetailPanel(props: RightDetailPanelProps) {
                     <>
                         <ConnectionPanel {...props} />
                         <ControlPanel {...props} />
-                        <SectionFrame title="Tổng quan khai thác">
+                        <SectionFrame title="Tổng quan vận hành">
                             <div className="grid grid-cols-2 gap-2">
-                                <SummaryCard label="Tổng UAV" value={droneRows.length} />
+                                <SummaryCard label="Tổng UAV" value={totalDrones} />
                                 <SummaryCard label="UAV rảnh" value={idleDrones} />
-                                <SummaryCard label="UAV đang giao" value={busyDrones} />
-                                <SummaryCard label="UAV sạc/lỗi" value={`${chargingDrones}/${failedDrones}`} />
-                                <SummaryCard label="Đơn đang giao" value={Object.values(props.orders).filter(order => ['going_to_pickup', 'picked_up', 'delivering'].includes(order.status)).length} />
-                                <SummaryCard label="Đơn hoàn thành" value={Object.values(props.orders).filter(order => order.status === 'completed').length} />
-                                <SummaryCard label="Đơn thất bại" value={Object.values(props.orders).filter(order => order.status === 'failed').length} />
+                                <SummaryCard label="Đơn hàng còn lại" value={remainingOrders} />
+                                <SummaryCard label="Đơn đang vận chuyển" value={transportingOrders} />
+                                <SummaryCard label="Đơn hoàn thành" value={completedOrders} />
+                                <SummaryCard label="Đơn thất bại" value={failedOrders} />
                             </div>
                         </SectionFrame>
-                        {(progressOrder || selectedMission || relatedDrone) && (
-                            <MissionProgressPanel
-                                order={progressOrder}
-                                mission={selectedMission}
-                                drone={relatedDrone}
-                                plannedPath3d={props.plannedPath3d}
-                                onSelectDrone={props.onSelectDrone}
-                                onSelectOrder={props.onSelectOrder}
-                            />
-                        )}
                     </>
                 )}
 

@@ -1,25 +1,22 @@
 'use client';
 
 import type { ServerStatus, SimulationStatus, WorkerStatus } from '../types/simulation';
-import { translateSimulationStatus, translateWorkerStatus } from '../utils/labels';
+import { translateServerStatus, translateSimulationStatus, translateWorkerStatus } from '../utils/labels';
 
 type ConnectionPanelProps = {
     serverStatus: ServerStatus;
     workerStatus: WorkerStatus;
     simulationStatus: SimulationStatus;
-    activeSimId: string | null;
-    frontendId: string | null;
-    latencyMs: number | null;
+    activeSimId?: string | null;
+    frontendId?: string | null;
+    latencyMs?: number | null;
 };
 
 export default function ConnectionPanel(props: ConnectionPanelProps) {
     const rows = [
-        ['Máy chủ', props.serverStatus === 'connected' ? 'Đã kết nối' : props.serverStatus],
-        ['Worker', translateWorkerStatus(props.workerStatus)],
-        ['Mô phỏng', translateSimulationStatus(props.simulationStatus)],
-        ['Phiên', props.activeSimId ?? '-'],
-        ['Giao diện', props.frontendId ?? '-'],
-        ['Độ trễ', props.latencyMs !== null ? `${props.latencyMs}ms` : '-']
+        ['Máy chủ', translateServerStatus(props.serverStatus)],
+        ['Bộ xử lý', translateWorkerStatus(props.workerStatus)],
+        ['Mô phỏng', translateSimulationStatus(props.simulationStatus)]
     ];
 
     return (
