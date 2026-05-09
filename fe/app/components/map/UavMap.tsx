@@ -6,6 +6,7 @@ import type { Feature, GeoJsonObject, GeoJsonProperties, Geometry } from 'geojso
 import type { Layer } from 'leaflet';
 import MapEvents from './MapEvents';
 import MapResizeController from './MapResizeController';
+import SmoothDroneMarker from './SmoothDroneMarker';
 import WindOverlay from './WindOverlay';
 import type {
     DroneTelemetry,
@@ -106,7 +107,7 @@ export default function UavMap({
         : mapInteractionMode === 'select_dropoff'
             ? 'Đang chọn điểm giao hàng trên bản đồ'
             : mapInteractionMode === 'obstacle'
-                ? 'Đang đặt vật cản'
+                ? 'Đang chọn vị trí đặt vật cản. Click lên bản đồ để đặt.'
                 : null;
 
     return (
@@ -270,17 +271,16 @@ export default function UavMap({
                     const colors = droneColors(drone.status);
                     const battery = drone.batteryPercent ?? drone.battery;
                     return (
-                        <CircleMarker
+                        <SmoothDroneMarker
                             key={`drone-${droneId}`}
-                            center={drone.pos}
+                            droneId={droneId}
+                            drone={drone}
+                            selected={selected}
                             radius={selected ? 10 : 7}
-                            eventHandlers={{ click: () => onSelectDrone(droneId) }}
                             pathOptions={{ color: colors.color, fillColor: colors.color, fillOpacity: 1, weight: selected ? 3 : 2 }}
-                        >
-                            <Tooltip permanent={selected} direction="bottom" className="building-label">
-                                {droneId} / {drone.status ?? '--'} / {typeof battery === 'number' ? `${battery.toFixed(0)}%` : '--'}
-                            </Tooltip>
-                        </CircleMarker>
+                            battery={typeof battery === 'number' ? battery : undefined}
+                            onSelect={onSelectDrone}
+                        />
                     );
                 })}
             </MapContainer>

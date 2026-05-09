@@ -380,31 +380,18 @@ export default function RightDetailPanel(props: RightDetailPanelProps) {
                             onApply={props.onApplyWeather}
                             disabled={!props.activeSimId}
                         />
-                        <ObstaclePanel obstacleConfig={props.obstacleConfig} onChange={props.onObstacleChange} />
+                        <ObstaclePanel
+                            obstacleConfig={props.obstacleConfig}
+                            onChange={props.onObstacleChange}
+                            isPlacingObstacle={props.mapInteractionMode === 'obstacle'}
+                            onStartPlacement={() => props.onSetMapInteractionMode('obstacle')}
+                            onCancelPlacement={() => props.onSetMapInteractionMode('none')}
+                        />
                     </>
                 )}
 
                 {props.activeSection === 'map_tools' && (
-                    <>
-                        <LayerTogglePanel layers={props.layers} onToggle={props.onLayerToggle} />
-                        <SectionFrame title="Chế độ thao tác">
-                            <button
-                                onClick={() => props.onSetMapInteractionMode(props.mapInteractionMode === 'obstacle' ? 'none' : 'obstacle')}
-                                className={`w-full rounded px-3 py-2 text-xs font-bold ${
-                                    props.mapInteractionMode === 'obstacle'
-                                        ? 'bg-orange-600 text-white'
-                                        : 'border border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100'
-                                }`}
-                            >
-                                {props.mapInteractionMode === 'obstacle' ? 'Tắt chế độ đặt vật cản' : 'Bật chế độ đặt vật cản'}
-                            </button>
-                        </SectionFrame>
-                        <SectionFrame title="Công cụ bản đồ">
-                            <p className="text-sm leading-relaxed text-slate-600">
-                                Bật/tắt lớp bản đồ và click lên bản đồ để đặt vật cản khi công cụ vật cản đang cấu hình.
-                            </p>
-                        </SectionFrame>
-                    </>
+                    <LayerTogglePanel layers={props.layers} onToggle={props.onLayerToggle} />
                 )}
 
                 {props.activeSection === 'events' && (

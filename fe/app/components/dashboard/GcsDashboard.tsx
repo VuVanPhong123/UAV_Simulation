@@ -99,15 +99,21 @@ export default function GcsDashboard() {
             addLocalEvent('info', 'MAP_CLICK_IGNORED', 'Chọn công cụ trước khi click bản đồ.');
             return;
         }
-        const obstacle = {
-            pos: latlng,
-            radius: obstacleConfig.radius,
-            height: obstacleConfig.height,
-            obstacleType: obstacleConfig.obstacleType
-        };
-        if (socket.addObstacle(obstacle)) {
-            setDynamicObstacles(prev => [...prev, obstacle]);
+        if (mapInteractionMode === 'obstacle') {
+            const obstacle = {
+                pos: latlng,
+                radius: obstacleConfig.radius,
+                height: obstacleConfig.height,
+                obstacleType: obstacleConfig.obstacleType
+            };
+            if (socket.addObstacle(obstacle)) {
+                setDynamicObstacles(prev => [...prev, obstacle]);
+                addLocalEvent('info', 'OBSTACLE_PLACED', 'Đã tạo vật cản trên bản đồ.');
+            }
+            setMapInteractionMode('none');
+            return;
         }
+        setMapInteractionMode('none');
     }, [addLocalEvent, mapInteractionMode, obstacleConfig, socket]);
 
     const handleDraftChange = useCallback(<K extends keyof DraftOrder,>(key: K, value: DraftOrder[K]) => {
