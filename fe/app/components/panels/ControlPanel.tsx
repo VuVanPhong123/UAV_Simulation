@@ -17,6 +17,7 @@ type ControlPanelProps = {
     onResume: () => void;
     onStop?: () => void;
     onReset: () => void;
+    onOpenOrderModal?: () => void;
 };
 
 function Button({
@@ -57,7 +58,8 @@ export default function ControlPanel({
     onStart,
     onPause,
     onResume,
-    onReset
+    onReset,
+    onOpenOrderModal
 }: ControlPanelProps) {
     const startDisabled = serverStatus !== 'connected' || workerStatus !== 'idle' || simulationStatus === 'running' || !canStartWithOrders;
     const pauseDisabled = simulationStatus !== 'running';
@@ -68,6 +70,14 @@ export default function ControlPanel({
         <section className="rounded border border-slate-200 bg-white p-3">
             <h2 className="border-b border-slate-100 pb-2 text-xs font-bold uppercase text-slate-500">Điều khiển mô phỏng</h2>
             <p className="mt-3 text-xs font-semibold text-slate-500">Số UAV mặc định: {droneCount}</p>
+            {onOpenOrderModal && (
+                <button
+                    onClick={onOpenOrderModal}
+                    className="mt-3 w-full rounded bg-blue-600 px-3 py-2 text-xs font-bold text-white hover:bg-blue-700"
+                >
+                    Đơn hàng
+                </button>
+            )}
             <div className="mt-3 grid grid-cols-2 gap-2">
                 <Button variant="primary" disabled={startDisabled} onClick={onStart}>Bắt đầu</Button>
                 <Button disabled={pauseDisabled} onClick={onPause}>Tạm dừng</Button>

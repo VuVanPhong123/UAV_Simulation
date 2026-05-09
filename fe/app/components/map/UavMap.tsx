@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic';
 import type { Feature, GeoJsonObject, GeoJsonProperties, Geometry } from 'geojson';
 import type { Layer } from 'leaflet';
 import MapEvents from './MapEvents';
+import MapResizeController from './MapResizeController';
 import WindOverlay from './WindOverlay';
 import type {
     DroneTelemetry,
@@ -46,6 +47,7 @@ type UavMapProps = {
     windDir: number;
     windSpeed: number;
     mapInteractionMode: MapInteractionMode;
+    resizeKey?: string | number | boolean;
     onMapClick: (latlng: LatLng) => void;
     onSelectDrone: (droneId: string) => void;
     onSelectOrder?: (orderId: string) => void;
@@ -79,6 +81,7 @@ export default function UavMap({
     windDir,
     windSpeed,
     mapInteractionMode,
+    resizeKey,
     onMapClick,
     onSelectDrone,
     onSelectOrder
@@ -107,16 +110,34 @@ export default function UavMap({
                 : null;
 
     return (
-        <div className="relative h-full w-full overflow-hidden bg-slate-100">
+        <div className="relative h-full min-h-0 w-full min-w-0 overflow-hidden bg-slate-100">
             {layers.weatherOverlay && <WindOverlay windDir={windDir} windSpeed={windSpeed} />}
             {interactionText && (
                 <div className="absolute left-4 top-4 z-[500] rounded border border-blue-200 bg-white px-3 py-2 text-xs font-bold text-blue-700 shadow-sm">
                     {interactionText}
                 </div>
             )}
-            <MapContainer center={mapCenter} zoom={17} preferCanvas={true} className="h-full w-full z-10">
+            <MapContainer
+                center={mapCenter}
+                zoom={17}
+                minZoom={13}
+                maxZoom={20}
+                scrollWheelZoom={true}
+                zoomAnimation={true}
+                zoomSnap={0.25}
+                zoomDelta={0.25}
+                wheelPxPerZoomLevel={120}
+                preferCanvas={true}
+                className="h-full w-full z-10"
+            >
+                <MapResizeController resizeKey={resizeKey} />
                 <MapEvents onMapClick={onMapClick} />
-                <TileLayer url="https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png" />
+                <TileLayer
+                    url="https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png"
+                    keepBuffer={6}
+                    updateWhenIdle={false}
+                    updateWhenZooming={true}
+                />
 
                 {layers.buildings && buildings && (
                     <GeoJSON

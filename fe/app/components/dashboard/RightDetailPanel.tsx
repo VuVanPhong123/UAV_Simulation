@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import type { ReactNode } from 'react';
 import AltitudePanel from '../panels/AltitudePanel';
 import ConnectionPanel from '../panels/ConnectionPanel';
@@ -10,6 +11,7 @@ import LayerTogglePanel from '../panels/LayerTogglePanel';
 import ObstaclePanel from '../panels/ObstaclePanel';
 import TelemetryPanel from '../panels/TelemetryPanel';
 import WeatherPanel from '../panels/WeatherPanel';
+import OrderManagementModal from './OrderManagementModal';
 import OrderManagementPanel from './OrderManagementPanel';
 import OrderDetailPanel from './OrderDetailPanel';
 import DroneMissionPanel from './DroneMissionPanel';
@@ -97,6 +99,8 @@ type RightDetailPanelProps = {
     onImportJson: (text: string) => void;
     onDispatchOrders: () => void;
     onSetMapInteractionMode: (mode: MapInteractionMode) => void;
+    collapsed: boolean;
+    onToggleCollapsed: () => void;
 };
 
 function SectionFrame({ title, children }: { title: string; children: ReactNode }) {
@@ -203,6 +207,7 @@ function filterEvents(
 }
 
 export default function RightDetailPanel(props: RightDetailPanelProps) {
+    const [orderModalOpen, setOrderModalOpen] = useState(false);
     const droneRows = Object.values(props.drones);
     const orderRows = Object.values(props.orders);
     const totalDrones = droneRows.length || props.droneCount;
@@ -235,13 +240,60 @@ export default function RightDetailPanel(props: RightDetailPanelProps) {
     const relatedDrone = selectedDrone ?? (missionDroneId ? props.drones[missionDroneId] ?? null : orderDroneId ? props.drones[orderDroneId] ?? null : null);
     const filteredEvents = filterEvents(props.eventLogs, props.eventFilter, props.selectedDroneId, props.selectedOrderId, props.selectedMissionId);
 
+    if (props.collapsed) {
+        return (
+            <>
+                <aside className="flex h-full w-full shrink-0 items-start justify-center border-l border-slate-200 bg-slate-50 p-2">
+                    <button
+                        type="button"
+                        title="Mở bảng điều khiển"
+                        aria-label="Mở bảng điều khiển"
+                        onClick={props.onToggleCollapsed}
+                        className="w-full rounded border border-slate-300 bg-white px-2 py-2 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-100"
+                    >
+                        Mở
+                    </button>
+                </aside>
+                <OrderManagementModal
+                    open={orderModalOpen}
+                    onClose={() => setOrderModalOpen(false)}
+                    draftOrder={props.draftOrder}
+                    draftOrders={props.draftOrders}
+                    activeSimId={props.activeSimId}
+                    mapInteractionMode={props.mapInteractionMode}
+                    importError={props.importError}
+                    canStartWithOrders={props.canStartWithOrders && props.serverStatus === 'connected' && props.workerStatus === 'idle' && props.simulationStatus !== 'running'}
+                    startHint={props.startHint}
+                    onDraftChange={props.onDraftChange}
+                    onAddDraftOrder={props.onAddDraftOrder}
+                    onRemoveDraftOrder={props.onRemoveDraftOrder}
+                    onImportJson={props.onImportJson}
+                    onAddDraftOrders={props.onAddDemoDraftOrders}
+                    onStartWithDraftOrders={props.onStartWithDraftOrders}
+                    onSubmitDraftOrders={props.onSubmitDraftOrders}
+                    onSetMapInteractionMode={props.onSetMapInteractionMode}
+                />
+            </>
+        );
+    }
+
     return (
-        <aside className="w-[380px] shrink-0 overflow-y-auto border-l border-slate-200 bg-slate-50 p-3">
+        <>
+        <aside className="h-full w-full min-w-0 shrink-0 overflow-y-auto border-l border-slate-200 bg-slate-50 p-3">
             <div className="space-y-3">
+                <div className="sticky top-0 z-10 -mx-3 -mt-3 border-b border-slate-200 bg-slate-50 px-3 py-2">
+                    <button
+                        type="button"
+                        onClick={props.onToggleCollapsed}
+                        className="w-full rounded border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-100"
+                    >
+                        Thu gọn
+                    </button>
+                </div>
                 {props.activeSection === 'overview' && (
                     <>
                         <ConnectionPanel {...props} />
-                        <ControlPanel {...props} />
+                        <ControlPanel {...props} onOpenOrderModal={() => setOrderModalOpen(true)} />
                         <SectionFrame title="Tổng quan vận hành">
                             <div className="grid grid-cols-2 gap-2">
                                 <SummaryCard label="Tổng UAV" value={totalDrones} />
@@ -260,25 +312,10 @@ export default function RightDetailPanel(props: RightDetailPanelProps) {
                         <OrderManagementPanel
                             orders={props.orders}
                             missions={props.missions}
-                            draftOrder={props.draftOrder}
-                            draftOrders={props.draftOrders}
+                            draftOrderCount={props.draftOrders.length}
                             selectedOrderId={props.selectedOrderId}
-                            activeSimId={props.activeSimId}
-                            mapInteractionMode={props.mapInteractionMode}
-                            importError={props.importError}
-                            droneCount={props.droneCount}
-                            canStartWithOrders={props.canStartWithOrders && props.serverStatus === 'connected' && props.workerStatus === 'idle' && props.simulationStatus !== 'running'}
-                            startHint={props.startHint}
                             onSelectOrder={props.onSelectOrder}
-                            onAddDemoDraftOrders={props.onAddDemoDraftOrders}
-                            onStartWithDraftOrders={props.onStartWithDraftOrders}
-                            onDraftChange={props.onDraftChange}
-                            onAddDraftOrder={props.onAddDraftOrder}
-                            onRemoveDraftOrder={props.onRemoveDraftOrder}
-                            onSubmitDraftOrders={props.onSubmitDraftOrders}
-                            onImportJson={props.onImportJson}
-                            onDispatchOrders={props.onDispatchOrders}
-                            onSetMapInteractionMode={props.onSetMapInteractionMode}
+                            onOpenOrderModal={() => setOrderModalOpen(true)}
                         />
                         <OrderDetailPanel
                             selectedOrder={progressOrder}
@@ -390,5 +427,25 @@ export default function RightDetailPanel(props: RightDetailPanelProps) {
                 )}
             </div>
         </aside>
+        <OrderManagementModal
+            open={orderModalOpen}
+            onClose={() => setOrderModalOpen(false)}
+            draftOrder={props.draftOrder}
+            draftOrders={props.draftOrders}
+            activeSimId={props.activeSimId}
+            mapInteractionMode={props.mapInteractionMode}
+            importError={props.importError}
+            canStartWithOrders={props.canStartWithOrders && props.serverStatus === 'connected' && props.workerStatus === 'idle' && props.simulationStatus !== 'running'}
+            startHint={props.startHint}
+            onDraftChange={props.onDraftChange}
+            onAddDraftOrder={props.onAddDraftOrder}
+            onRemoveDraftOrder={props.onRemoveDraftOrder}
+            onImportJson={props.onImportJson}
+            onAddDraftOrders={props.onAddDemoDraftOrders}
+            onStartWithDraftOrders={props.onStartWithDraftOrders}
+            onSubmitDraftOrders={props.onSubmitDraftOrders}
+            onSetMapInteractionMode={props.onSetMapInteractionMode}
+        />
+        </>
     );
 }

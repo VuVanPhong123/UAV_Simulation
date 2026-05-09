@@ -5,7 +5,7 @@ import type { GeoJsonObject } from 'geojson';
 import TopStatusBar from './TopStatusBar';
 import LeftNavigation from './LeftNavigation';
 import RightDetailPanel from './RightDetailPanel';
-import BottomEventPanel from './BottomEventPanel';
+import BottomDroneInfoPanel from './BottomDroneInfoPanel';
 import UavMap from '../map/UavMap';
 import { useSimulationSocket } from '../hooks/useSimulationSocket';
 import { useTelemetryHistory } from '../hooks/useTelemetryHistory';
@@ -51,6 +51,7 @@ export default function GcsDashboard() {
     const [selectedMissionId, setSelectedMissionId] = useState<string | null>(null);
     const [eventFilter, setEventFilter] = useState<EventFilter>('all');
     const [mapInteractionMode, setMapInteractionMode] = useState<MapInteractionMode>('none');
+    const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
     const [importError, setImportError] = useState<string | null>(null);
     const validDraftOrders = draftOrders.filter(order => (
         order.orderId.trim()
@@ -132,7 +133,7 @@ export default function GcsDashboard() {
             ...prev.filter(existing => !orders.some(order => order.orderId === existing.orderId)),
             ...orders
         ]);
-        addLocalEvent('info', 'DEMO_ORDERS_ADDED', `Đã thêm ${orders.length} đơn demo vào danh sách nháp.`);
+        addLocalEvent('info', 'DRAFT_ORDERS_ADDED', `Đã thêm ${orders.length} đơn vào danh sách nháp.`);
     }, [addLocalEvent]);
 
     const handleSubmitDraftOrders = useCallback(() => {
@@ -166,7 +167,7 @@ export default function GcsDashboard() {
                 const dropoff = Array.isArray(item.dropoff) && item.dropoff.length === 2 ? [Number(item.dropoff[0]), Number(item.dropoff[1])] as LatLng : null;
                 const payloadKg = Number(item.payloadKg ?? item.payload_kg ?? 0);
                 if (!pickup || !dropoff || !Number.isFinite(payloadKg) || payloadKg <= 0) {
-                    throw new Error(`Đơn thứ ${idx + 1} thiếu pickup/dropoff/payloadKg hợp lệ.`);
+                    throw new Error(`Đơn thứ ${idx + 1} thiếu điểm lấy hàng, điểm giao hàng hoặc khối lượng hợp lệ.`);
                 }
                 return {
                     orderId: String(item.orderId ?? item.order_id ?? `order_ui_${Date.now()}_${idx}`),
@@ -277,10 +278,17 @@ export default function GcsDashboard() {
                 drones={socket.drones}
                 orders={socket.orders}
             />
-            <div className="grid min-h-0 flex-1 grid-cols-[80px_minmax(0,1fr)_380px]">
+            <div
+                className="grid min-h-0 flex-1"
+                style={{
+                    gridTemplateColumns: rightPanelCollapsed
+                        ? '80px minmax(0, 1fr) 48px'
+                        : '80px minmax(0, 1fr) 380px'
+                }}
+            >
                 <LeftNavigation activeSection={activeSection} onChange={setActiveSection} />
-                <div className="flex min-h-0 flex-col">
-                    <main className="min-h-0 flex-1">
+                <div className="flex min-h-0 min-w-0 flex-col">
+                    <main className="min-h-0 min-w-0 flex-1">
                         <UavMap
                             buildings={buildings}
                             mapConfig={socket.mapConfig}
@@ -298,18 +306,20 @@ export default function GcsDashboard() {
                             windDir={weather.wind_dir}
                             windSpeed={weather.wind_speed}
                             mapInteractionMode={mapInteractionMode}
+                            resizeKey={`${rightPanelCollapsed}-${activeSection}`}
                             onMapClick={handleMapClick}
                             onSelectDrone={handleSelectDrone}
                             onSelectOrder={handleSelectOrder}
                         />
                     </main>
-                    <BottomEventPanel
-                        events={socket.eventLogs}
+                    <BottomDroneInfoPanel
+                        selectedDrone={socket.selectedDrone}
                         selectedDroneId={socket.selectedDroneId}
+                        orders={socket.orders}
+                        missions={socket.missions}
+                        plannedPath3d={socket.selectedPath3d}
                         selectedOrderId={selectedOrderId}
                         selectedMissionId={selectedMissionId}
-                        eventFilter={eventFilter}
-                        onEventFilterChange={setEventFilter}
                     />
                 </div>
                 <RightDetailPanel
@@ -366,6 +376,8 @@ export default function GcsDashboard() {
                     onImportJson={handleImportJson}
                     onDispatchOrders={handleDispatchOrders}
                     onSetMapInteractionMode={setMapInteractionMode}
+                    collapsed={rightPanelCollapsed}
+                    onToggleCollapsed={() => setRightPanelCollapsed(prev => !prev)}
                 />
             </div>
         </div>
