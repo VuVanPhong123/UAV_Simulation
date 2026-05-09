@@ -23,7 +23,7 @@ const labels: Array<[keyof LayerToggles, string]> = [
 
 export default function LayerTogglePanel({ layers, onToggle }: LayerTogglePanelProps) {
     return (
-        <section className="rounded border border-slate-200 bg-white p-3">
+        <section data-testid="layer-toggle-panel" className="rounded border border-slate-200 bg-white p-3">
             <h2 className="border-b border-slate-100 pb-2 text-xs font-bold uppercase text-slate-500">Lớp bản đồ</h2>
             <div className="mt-3 space-y-2">
                 {labels.map(([key, label]) => (

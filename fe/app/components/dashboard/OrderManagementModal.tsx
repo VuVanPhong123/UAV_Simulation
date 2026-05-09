@@ -79,17 +79,20 @@ function NumberInput({
     label,
     value,
     onChange,
-    step = '0.000001'
+    step = '0.000001',
+    testId
 }: {
     label: string;
     value: number | '';
     onChange: (value: number | '') => void;
     step?: string;
+    testId?: string;
 }) {
     return (
         <label className="block text-xs font-semibold text-slate-600">
             {label}
             <input
+                data-testid={testId}
                 value={value}
                 onChange={event => {
                     const next = event.target.value;
@@ -159,7 +162,7 @@ export default function OrderManagementModal({
     if (!open) return null;
 
     return (
-        <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-slate-900/40 p-4">
+        <div data-testid="order-modal" className="fixed inset-0 z-[1000] flex items-center justify-center bg-slate-900/40 p-4">
             <div className="flex max-h-[92vh] w-full max-w-5xl flex-col rounded border border-slate-200 bg-slate-50 shadow-xl">
                 <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-3">
                     <div>
@@ -169,6 +172,7 @@ export default function OrderManagementModal({
                         </p>
                     </div>
                     <button
+                        data-testid="close-order-modal"
                         onClick={onClose}
                         className="rounded border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100"
                     >
@@ -272,9 +276,11 @@ export default function OrderManagementModal({
                                         label="Số đơn hàng"
                                         value={randomCount}
                                         step="1"
+                                        testId="random-order-count"
                                         onChange={value => setRandomCount(clampOrderCount(Number(value || 1)))}
                                     />
                                     <button
+                                        data-testid="generate-random-orders"
                                         onClick={() => {
                                             const orders = createRandomOrders(randomCount);
                                             onAddDraftOrders(orders);
@@ -308,7 +314,7 @@ export default function OrderManagementModal({
 
                         <div className="lg:col-span-2">
                             <Section title="Danh sách đơn nháp">
-                                <div className="max-h-72 space-y-2 overflow-y-auto">
+                                <div data-testid="draft-order-list" className="max-h-72 space-y-2 overflow-y-auto">
                                     {draftOrders.map(order => (
                                         <div key={order.orderId} className="rounded border border-slate-200 bg-slate-50 p-2 text-xs">
                                             <div className="flex items-center justify-between gap-2">
@@ -335,6 +341,7 @@ export default function OrderManagementModal({
                         {submitDisabled ? actionHint : activeSimId ? 'Sẵn sàng gửi thêm đơn hàng.' : 'Sẵn sàng bắt đầu mô phỏng với danh sách đơn hiện tại.'}
                     </p>
                     <button
+                        data-testid="start-simulation"
                         disabled={submitDisabled}
                         onClick={activeSimId ? onSubmitDraftOrders : onStartWithDraftOrders}
                         className="rounded bg-blue-600 px-4 py-2 text-xs font-bold text-white hover:bg-blue-700 disabled:bg-slate-300 disabled:text-slate-500"

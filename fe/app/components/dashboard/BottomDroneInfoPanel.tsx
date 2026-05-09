@@ -93,7 +93,7 @@ export default function BottomDroneInfoPanel({
 }: BottomDroneInfoPanelProps) {
     if (!selectedDrone) {
         return (
-            <section className="h-32 border-t border-slate-200 bg-white px-3 py-2">
+            <section data-testid="bottom-drone-info-panel" className="h-32 border-t border-slate-200 bg-white px-3 py-2">
                 <h2 className="text-xs font-bold uppercase text-slate-500">Thông số UAV</h2>
                 <div className="mt-4 rounded border border-dashed border-slate-300 bg-slate-50 px-3 py-4 text-sm font-semibold text-slate-500">
                     Chọn một UAV trên bản đồ để xem thông số vận hành.
@@ -117,7 +117,7 @@ export default function BottomDroneInfoPanel({
         : null;
 
     return (
-        <section className="h-40 overflow-hidden border-t border-slate-200 bg-white px-3 py-2">
+        <section data-testid="bottom-drone-info-panel" className="h-40 overflow-hidden border-t border-slate-200 bg-white px-3 py-2">
             <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
                     <h2 className="text-xs font-bold uppercase text-slate-500">Thông số UAV</h2>

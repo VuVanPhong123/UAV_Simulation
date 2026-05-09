@@ -24,12 +24,14 @@ function Button({
     children,
     disabled,
     onClick,
-    variant = 'default'
+    variant = 'default',
+    testId
 }: {
     children: ReactNode;
     disabled?: boolean;
     onClick: () => void;
     variant?: 'primary' | 'default' | 'danger';
+    testId?: string;
 }) {
     const classes = variant === 'primary'
         ? 'bg-blue-600 text-white hover:bg-blue-700 disabled:bg-slate-300 disabled:text-slate-500'
@@ -38,6 +40,7 @@ function Button({
             : 'bg-slate-100 text-slate-700 hover:bg-slate-200 disabled:bg-slate-100 disabled:text-slate-400';
     return (
         <button
+            data-testid={testId}
             disabled={disabled}
             onClick={onClick}
             className={`rounded border border-transparent px-3 py-2 text-xs font-bold transition-colors ${classes}`}
@@ -72,6 +75,7 @@ export default function ControlPanel({
             <p className="mt-3 text-xs font-semibold text-slate-500">Số UAV mặc định: {droneCount}</p>
             {onOpenOrderModal && (
                 <button
+                    data-testid="open-order-modal"
                     onClick={onOpenOrderModal}
                     className="mt-3 w-full rounded bg-blue-600 px-3 py-2 text-xs font-bold text-white hover:bg-blue-700"
                 >

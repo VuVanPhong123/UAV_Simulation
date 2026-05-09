@@ -246,6 +246,7 @@ export default function RightDetailPanel(props: RightDetailPanelProps) {
                 <aside className="flex h-full w-full shrink-0 items-start justify-center border-l border-slate-200 bg-slate-50 p-2">
                     <button
                         type="button"
+                        data-testid="expand-right-panel"
                         title="Mở bảng điều khiển"
                         aria-label="Mở bảng điều khiển"
                         onClick={props.onToggleCollapsed}
@@ -284,6 +285,7 @@ export default function RightDetailPanel(props: RightDetailPanelProps) {
                 <div className="sticky top-0 z-10 -mx-3 -mt-3 border-b border-slate-200 bg-slate-50 px-3 py-2">
                     <button
                         type="button"
+                        data-testid="collapse-right-panel"
                         onClick={props.onToggleCollapsed}
                         className="w-full rounded border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-100"
                     >

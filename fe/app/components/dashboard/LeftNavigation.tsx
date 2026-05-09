@@ -24,6 +24,7 @@ export default function LeftNavigation({ activeSection, onChange }: LeftNavigati
                 return (
                     <button
                         key={item.key}
+                        data-testid={item.key === 'environment' ? 'nav-environment' : item.key === 'map_tools' ? 'nav-map-tools' : undefined}
                         onClick={() => onChange(item.key)}
                         className={`rounded border px-1 py-2 text-center transition-colors ${
                             active

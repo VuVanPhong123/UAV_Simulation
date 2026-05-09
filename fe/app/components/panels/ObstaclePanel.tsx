@@ -55,6 +55,7 @@ export default function ObstaclePanel({
                         </div>
                         <button
                             type="button"
+                            data-testid="cancel-obstacle"
                             onClick={onCancelPlacement}
                             className="w-full rounded border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100"
                         >
@@ -64,6 +65,7 @@ export default function ObstaclePanel({
                 ) : (
                     <button
                         type="button"
+                        data-testid="create-obstacle"
                         onClick={onStartPlacement}
                         className="w-full rounded bg-orange-600 px-3 py-2 text-xs font-bold text-white hover:bg-orange-700"
                     >
