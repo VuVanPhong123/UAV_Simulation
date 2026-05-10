@@ -127,7 +127,7 @@ export function useSimulationSocket() {
     const startSimulation = useCallback((input: StartSimulationInput = 1) => {
         const droneCount = typeof input === 'number' ? input : input.droneCount;
         const orderBatch = typeof input === 'number' ? undefined : input.orderBatch;
-        sendJson({
+        return sendJson({
             type: 'request_start_simulation',
             payload: {
                 mapId: 'hanoi_default',
@@ -242,7 +242,6 @@ export function useSimulationSocket() {
                 const droneId = data.droneId ?? telemetry.droneId ?? 'drone_1';
                 const nextTelemetry = { ...telemetry, droneId };
                 setDrones(prev => ({ ...prev, [droneId]: nextTelemetry }));
-                setSelectedDroneId(prev => prev ?? droneId);
                 if (telemetry.status === 'paused') setSimulationStatus('paused');
                 else if (telemetry.status && !['success', 'failed', 'emergency_landing'].includes(telemetry.status) && activeSimIdRef.current) {
                     setSimulationStatus('running');
@@ -253,7 +252,6 @@ export function useSimulationSocket() {
                 const droneId = data.droneId ?? data.payload?.droneId ?? 'drone_1';
                 setPlannedPaths(prev => ({ ...prev, [droneId]: data.payload?.path ?? data.path ?? [] }));
                 setPlannedPaths3d(prev => ({ ...prev, [droneId]: data.payload?.path3d ?? data.path3d ?? [] }));
-                setSelectedDroneId(prev => prev ?? droneId);
             } else if (data.type === 'order_state') {
                 setOrders(mapOrders(data.payload?.orders as DeliveryOrder[] | undefined));
                 setMissions(mapMissions(data.payload?.missions as Mission[] | undefined));

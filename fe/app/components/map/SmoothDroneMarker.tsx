@@ -8,8 +8,11 @@ import type { DroneTelemetry, LatLng } from '../types/simulation';
 const CircleMarker = dynamic(() => import('react-leaflet').then(mod => mod.CircleMarker), { ssr: false });
 const Tooltip = dynamic(() => import('react-leaflet').then(mod => mod.Tooltip), { ssr: false });
 
-const ANIMATION_MS = 700;
-const SNAP_DISTANCE_METERS = 200;
+const FALLBACK_ANIMATION_MS = 950;
+const MIN_ANIMATION_MS = 600;
+const MAX_ANIMATION_MS = 1800;
+const TELEMETRY_BUFFER_MS = 100;
+const SNAP_DISTANCE_METERS = 350;
 const STILL_DISTANCE_METERS = 0.2;
 
 type SmoothDroneMarkerProps = {
@@ -51,8 +54,8 @@ function interpolateLatLng(from: LatLng, to: LatLng, t: number): LatLng {
     ];
 }
 
-function easeOutCubic(t: number) {
-    return 1 - (1 - t) ** 3;
+function clamp(value: number, min: number, max: number) {
+    return Math.max(min, Math.min(max, value));
 }
 
 function shouldSnap(from: LatLng | null, to: LatLng, drone: DroneTelemetry) {
@@ -74,8 +77,11 @@ export default function SmoothDroneMarker({
 }: SmoothDroneMarkerProps) {
     const initialPos = isValidLatLng(drone.pos) ? drone.pos : null;
     const [displayPos, setDisplayPos] = useState<LatLng | null>(initialPos);
+    const [hovered, setHovered] = useState(false);
     const displayPosRef = useRef<LatLng | null>(initialPos);
     const animationRef = useRef<number | null>(null);
+    const lastTargetUpdateAtRef = useRef<number | null>(null);
+    const lastTargetKeyRef = useRef<string | null>(null);
     const targetKey = isValidLatLng(drone.pos) ? `${drone.pos[0]},${drone.pos[1]}` : 'none';
 
     useEffect(() => {
@@ -100,6 +106,18 @@ export default function SmoothDroneMarker({
 
         const targetPos = drone.pos;
         const startPos = displayPosRef.current;
+        const now = performance.now();
+        const targetChanged = lastTargetKeyRef.current !== targetKey;
+        const intervalMs = targetChanged && lastTargetUpdateAtRef.current !== null
+            ? now - lastTargetUpdateAtRef.current
+            : null;
+        const animationMs = intervalMs !== null
+            ? clamp(intervalMs + TELEMETRY_BUFFER_MS, MIN_ANIMATION_MS, MAX_ANIMATION_MS)
+            : FALLBACK_ANIMATION_MS;
+        if (targetChanged) {
+            lastTargetUpdateAtRef.current = now;
+            lastTargetKeyRef.current = targetKey;
+        }
 
         if (shouldSnap(startPos, targetPos, drone)) {
             displayPosRef.current = targetPos;
@@ -119,10 +137,10 @@ export default function SmoothDroneMarker({
             return;
         }
 
-        const startedAt = performance.now();
-        const animate = (now: number) => {
-            const progress = Math.min((now - startedAt) / ANIMATION_MS, 1);
-            const nextPos = interpolateLatLng(startPos, targetPos, easeOutCubic(progress));
+        const startedAt = now;
+        const animate = (frameNow: number) => {
+            const progress = Math.min((frameNow - startedAt) / animationMs, 1);
+            const nextPos = interpolateLatLng(startPos, targetPos, progress);
             displayPosRef.current = nextPos;
             setDisplayPos(nextPos);
 
@@ -141,14 +159,25 @@ export default function SmoothDroneMarker({
 
     if (!displayPos) return null;
 
+    const active = selected || hovered;
+    const markerRadius = active ? Math.max(radius + 4, 11) : radius;
+
     return (
         <CircleMarker
             center={displayPos}
-            radius={radius}
-            eventHandlers={{ click: () => onSelect(droneId) }}
-            pathOptions={pathOptions}
+            radius={markerRadius}
+            eventHandlers={{
+                click: () => onSelect(droneId),
+                mouseover: () => setHovered(true),
+                mouseout: () => setHovered(false)
+            }}
+            pathOptions={{
+                ...pathOptions,
+                weight: active ? 4 : pathOptions.weight,
+                className: 'cursor-pointer'
+            }}
         >
-            <Tooltip permanent={selected} direction="bottom" className="building-label">
+            <Tooltip permanent={active} direction="bottom" className="building-label">
                 {droneId} / {drone.status ?? '--'} / {typeof battery === 'number' ? `${battery.toFixed(0)}%` : '--'}
             </Tooltip>
         </CircleMarker>

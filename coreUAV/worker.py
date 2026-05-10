@@ -547,16 +547,6 @@ def main():
                         last_path_ids[agent.drone_id] = current_path_ids.get(agent.drone_id)
 
                 time.sleep(dt)
-                if world.is_all_done():
-                    finished_status = world.final_status()
-                    send_all_telemetry(True)
-                    send_simulation_finished(finished_status)
-                    send_worker_status("idle")
-                    print("Simulation ket thuc. Worker ve idle.")
-                    is_running = False
-                    is_assigned = False
-                    sim_id = None
-                    frontend_id = None
             except Exception as e:
                 print(f"[Worker Error] {e}")
                 if world is not None:

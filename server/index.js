@@ -312,12 +312,7 @@ function routeWorkerMessage(ws, data) {
     }
 
     if (data.type === 'event') {
-        const code = data.payload?.code;
-        if (code === 'DELIVERY_SUCCESS') {
-            simulation.status = 'stopped';
-        } else if (code === 'DELIVERY_FAILED') {
-            simulation.status = 'failed';
-        }
+        return;
     }
 }
 

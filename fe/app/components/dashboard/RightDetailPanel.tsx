@@ -32,6 +32,7 @@ import type {
     EventFilter,
     EventLogEntry,
     LayerToggles,
+    MapConfig,
     MapInteractionMode,
     Mission,
     MissionsById,
@@ -71,6 +72,7 @@ type RightDetailPanelProps = {
     missions: MissionsById;
     draftOrder: DraftOrder;
     draftOrders: DraftOrder[];
+    mapConfig: MapConfig | null;
     selectedOrderId: string | null;
     selectedMissionId: string | null;
     eventFilter: EventFilter;
@@ -91,12 +93,12 @@ type RightDetailPanelProps = {
     onSelectMission: (missionId: string) => void;
     onEventFilterChange: (value: EventFilter) => void;
     onAddDemoDraftOrders: (orders: DraftOrder[]) => void;
-    onStartWithDraftOrders: () => void;
+    onStartWithDraftOrders: () => boolean;
     onDraftChange: <K extends keyof DraftOrder>(key: K, value: DraftOrder[K]) => void;
     onAddDraftOrder: () => void;
     onRemoveDraftOrder: (orderId: string) => void;
-    onSubmitDraftOrders: () => void;
-    onImportJson: (text: string) => void;
+    onSubmitDraftOrders: () => boolean;
+    onImportJson: (text: string) => boolean;
     onDispatchOrders: () => void;
     onSetMapInteractionMode: (mode: MapInteractionMode) => void;
     collapsed: boolean;
@@ -261,6 +263,7 @@ export default function RightDetailPanel(props: RightDetailPanelProps) {
                     draftOrder={props.draftOrder}
                     draftOrders={props.draftOrders}
                     activeSimId={props.activeSimId}
+                    mapConfig={props.mapConfig}
                     mapInteractionMode={props.mapInteractionMode}
                     importError={props.importError}
                     canStartWithOrders={props.canStartWithOrders && props.serverStatus === 'connected' && props.workerStatus === 'idle' && props.simulationStatus !== 'running'}
@@ -422,6 +425,7 @@ export default function RightDetailPanel(props: RightDetailPanelProps) {
             draftOrder={props.draftOrder}
             draftOrders={props.draftOrders}
             activeSimId={props.activeSimId}
+            mapConfig={props.mapConfig}
             mapInteractionMode={props.mapInteractionMode}
             importError={props.importError}
             canStartWithOrders={props.canStartWithOrders && props.serverStatus === 'connected' && props.workerStatus === 'idle' && props.simulationStatus !== 'running'}

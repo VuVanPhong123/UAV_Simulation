@@ -6,6 +6,7 @@ import type { Feature, GeoJsonObject, GeoJsonProperties, Geometry } from 'geojso
 import type { Layer } from 'leaflet';
 import MapEvents from './MapEvents';
 import MapResizeController from './MapResizeController';
+import MapZoomSlider from './MapZoomSlider';
 import SmoothDroneMarker from './SmoothDroneMarker';
 import WindOverlay from './WindOverlay';
 import type {
@@ -21,7 +22,7 @@ import type {
     PathHistoryByDrone,
     PlannedPathsByDrone
 } from '../types/simulation';
-import { orderIdOf, translateOrderStatus } from '../utils/labels';
+import { orderIdOf } from '../utils/labels';
 
 const MapContainer = dynamic(() => import('react-leaflet').then(mod => mod.MapContainer), { ssr: false });
 const TileLayer = dynamic(() => import('react-leaflet').then(mod => mod.TileLayer), { ssr: false });
@@ -102,6 +103,28 @@ export default function UavMap({
     const selectedPathHistory = selectedDroneId ? pathHistoryByDrone[selectedDroneId] ?? [] : [];
     const selectedMission = selectedMissionId ? missions[selectedMissionId] ?? null : null;
     const selectedMissionOrderId = selectedMission?.orderId ?? selectedMission?.order_id ?? null;
+    const visibleOrderIds = useMemo(() => {
+        const ids = new Set<string>();
+        if (selectedOrderId) ids.add(selectedOrderId);
+        if (selectedMissionOrderId) ids.add(selectedMissionOrderId);
+        if (selectedDroneId) {
+            if (selectedDrone?.currentOrderId) ids.add(selectedDrone.currentOrderId);
+            Object.values(orders).forEach(order => {
+                const assignedDroneId = order.assignedDroneId ?? order.assigned_drone_id;
+                if (assignedDroneId === selectedDroneId) {
+                    ids.add(orderIdOf(order));
+                }
+            });
+            Object.values(missions).forEach(mission => {
+                const missionDroneId = mission.droneId ?? mission.drone_id;
+                const missionOrderId = mission.orderId ?? mission.order_id;
+                if (missionDroneId === selectedDroneId && missionOrderId) {
+                    ids.add(missionOrderId);
+                }
+            });
+        }
+        return ids;
+    }, [missions, orders, selectedDrone, selectedDroneId, selectedMissionOrderId, selectedOrderId]);
     const interactionText = mapInteractionMode === 'select_pickup'
         ? 'Đang chọn điểm lấy hàng trên bản đồ'
         : mapInteractionMode === 'select_dropoff'
@@ -122,7 +145,7 @@ export default function UavMap({
                 center={mapCenter}
                 zoom={17}
                 minZoom={13}
-                maxZoom={20}
+                maxZoom={19}
                 scrollWheelZoom={true}
                 zoomAnimation={true}
                 zoomSnap={0.25}
@@ -135,10 +158,13 @@ export default function UavMap({
                 <MapEvents onMapClick={onMapClick} />
                 <TileLayer
                     url="https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png"
+                    maxNativeZoom={19}
+                    maxZoom={19}
                     keepBuffer={6}
-                    updateWhenIdle={false}
-                    updateWhenZooming={true}
+                    updateWhenIdle={true}
+                    updateWhenZooming={false}
                 />
+                <MapZoomSlider />
 
                 {layers.buildings && buildings && (
                     <GeoJSON
@@ -223,7 +249,8 @@ export default function UavMap({
 
                 {Object.values(orders).filter(order => {
                     const orderId = orderIdOf(order);
-                    return layers.orders || selectedOrderId === orderId || selectedMissionOrderId === orderId;
+                    const forceVisible = selectedOrderId === orderId || selectedMissionOrderId === orderId;
+                    return forceVisible || (layers.orders && visibleOrderIds.has(orderId));
                 }).map(order => {
                     const orderId = orderIdOf(order);
                     const pickup = order.pickup;
@@ -232,8 +259,6 @@ export default function UavMap({
                     const completed = ['completed', 'failed', 'canceled'].includes(order.status);
                     const pickupColor = completed ? '#64748b' : '#0ea5e9';
                     const dropoffColor = completed ? '#64748b' : '#f97316';
-                    const assignedDroneId = order.assignedDroneId ?? order.assigned_drone_id;
-                    const tooltipSuffix = assignedDroneId ? ` / UAV ${assignedDroneId}` : '';
                     return (
                         <Fragment key={`order-${orderId}`}>
                             {Array.isArray(pickup) && pickup.length === 2 && (
@@ -243,7 +268,7 @@ export default function UavMap({
                                     eventHandlers={{ click: () => onSelectOrder?.(orderId) }}
                                     pathOptions={{ color: pickupColor, fillColor: pickupColor, fillOpacity: selected ? 1 : 0.75, weight: selected ? 5 : 2 }}
                                 >
-                                    <Tooltip permanent={selected} direction="top">Lấy hàng: {orderId}{tooltipSuffix} / {translateOrderStatus(order.status)}</Tooltip>
+                                    <Tooltip permanent={selected} direction="top">Điểm lấy hàng</Tooltip>
                                 </CircleMarker>
                             )}
                             {Array.isArray(dropoff) && dropoff.length === 2 && (
@@ -253,7 +278,7 @@ export default function UavMap({
                                     eventHandlers={{ click: () => onSelectOrder?.(orderId) }}
                                     pathOptions={{ color: dropoffColor, fillColor: dropoffColor, fillOpacity: selected ? 1 : 0.75, weight: selected ? 5 : 2 }}
                                 >
-                                    <Tooltip permanent={selected} direction="bottom">Giao hàng: {orderId}{tooltipSuffix} / {translateOrderStatus(order.status)}</Tooltip>
+                                    <Tooltip permanent={selected} direction="bottom">Điểm giao hàng</Tooltip>
                                 </CircleMarker>
                             )}
                         </Fragment>

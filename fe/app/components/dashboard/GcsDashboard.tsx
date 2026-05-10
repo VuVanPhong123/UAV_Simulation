@@ -143,21 +143,26 @@ export default function GcsDashboard() {
     }, [addLocalEvent]);
 
     const handleSubmitDraftOrders = useCallback(() => {
-        if (draftOrders.length === 0) return;
+        if (draftOrders.length === 0) return false;
         if (socket.submitOrderBatch(draftOrders)) {
             setDraftOrders([]);
             addLocalEvent('info', 'ORDER_BATCH_SUBMITTED', 'Đã gửi danh sách đơn hàng.');
+            return true;
         }
+        return false;
     }, [addLocalEvent, draftOrders, socket]);
 
     const handleStartWithDraftOrders = useCallback(() => {
         if (!canStartWithOrders) {
             addLocalEvent('warning', 'START_NEEDS_ORDERS', startHint);
-            return;
+            return false;
         }
-        socket.startSimulation({ droneCount, orderBatch: validDraftOrders });
+        if (!socket.startSimulation({ droneCount, orderBatch: validDraftOrders })) {
+            return false;
+        }
         setDraftOrders([]);
         addLocalEvent('info', 'ORDER_FIRST_START_REQUESTED', `Bắt đầu mô phỏng với ${validDraftOrders.length} đơn hàng.`);
+        return true;
     }, [addLocalEvent, canStartWithOrders, droneCount, socket, startHint, validDraftOrders]);
 
     const normalizePriority = useCallback((value: unknown): OrderPriority => {
@@ -187,10 +192,12 @@ export default function GcsDashboard() {
             setDraftOrders(prev => [...prev, ...imported]);
             setImportError(null);
             addLocalEvent('info', 'ORDER_JSON_IMPORTED', `Đã nạp ${imported.length} đơn vào danh sách nháp.`);
+            return true;
         } catch (error) {
             const message = error instanceof Error ? error.message : 'JSON không hợp lệ.';
             setImportError(message);
             addLocalEvent('warning', 'ORDER_JSON_INVALID', message);
+            return false;
         }
     }, [addLocalEvent, normalizePriority]);
 
@@ -352,6 +359,7 @@ export default function GcsDashboard() {
                     missions={socket.missions}
                     draftOrder={draftOrder}
                     draftOrders={draftOrders}
+                    mapConfig={socket.mapConfig}
                     selectedOrderId={selectedOrderId}
                     selectedMissionId={selectedMissionId}
                     eventFilter={eventFilter}

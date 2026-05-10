@@ -9,6 +9,7 @@ import {
 import type {
     DraftOrder,
     LatLng,
+    MapConfig,
     MapInteractionMode,
     OrderPriority
 } from '../types/simulation';
@@ -19,6 +20,7 @@ type OrderManagementModalProps = {
     draftOrder: DraftOrder;
     draftOrders: DraftOrder[];
     activeSimId: string | null;
+    mapConfig: MapConfig | null;
     mapInteractionMode: MapInteractionMode;
     importError: string | null;
     canStartWithOrders: boolean;
@@ -26,24 +28,25 @@ type OrderManagementModalProps = {
     onDraftChange: <K extends keyof DraftOrder>(key: K, value: DraftOrder[K]) => void;
     onAddDraftOrder: () => void;
     onRemoveDraftOrder: (orderId: string) => void;
-    onImportJson: (text: string) => void;
+    onImportJson: (text: string) => boolean;
     onAddDraftOrders: (orders: DraftOrder[]) => void;
-    onStartWithDraftOrders: () => void;
-    onSubmitDraftOrders: () => void;
+    onStartWithDraftOrders: () => boolean;
+    onSubmitDraftOrders: () => boolean;
     onSetMapInteractionMode: (mode: MapInteractionMode) => void;
 };
 
 const priorities: OrderPriority[] = ['low', 'normal', 'high', 'urgent'];
 const randomPriorities: OrderPriority[] = ['low', 'normal', 'high'];
-const SAFE_ORDER_POINTS: LatLng[] = [
-    [21.0285, 105.8542],
-    [21.0290, 105.8550],
-    [21.0278, 105.8536],
-    [21.0300, 105.8560],
-    [21.0268, 105.8528],
-    [21.0296, 105.8538],
-    [21.0282, 105.8562],
-    [21.0302, 105.8544]
+const NO_FLY_BUFFER_METERS = 20;
+const DEMO_SAFE_ORDER_POINTS: LatLng[] = [
+    [21.0260, 105.8500],
+    [21.0261, 105.8539],
+    [21.0286, 105.8501],
+    [21.0309, 105.8520],
+    [21.0310, 105.8569],
+    [21.0270, 105.8568],
+    [21.0252, 105.8527],
+    [21.0292, 105.8580]
 ];
 
 function clampOrderCount(value: number) {
@@ -55,20 +58,74 @@ function randomIndex(max: number) {
     return Math.floor(Math.random() * max);
 }
 
-function createRandomOrders(count: number): DraftOrder[] {
+function toRadians(value: number) {
+    return value * Math.PI / 180;
+}
+
+function distanceMeters(a: LatLng, b: LatLng) {
+    const earthRadiusMeters = 6371000;
+    const dLat = toRadians(b[0] - a[0]);
+    const dLng = toRadians(b[1] - a[1]);
+    const lat1 = toRadians(a[0]);
+    const lat2 = toRadians(b[0]);
+    const h = Math.sin(dLat / 2) ** 2
+        + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+    return 2 * earthRadiusMeters * Math.asin(Math.sqrt(h));
+}
+
+function isInsideNoFlyZone(point: LatLng, noFlyZones: MapConfig['no_fly_zones'] = []) {
+    return noFlyZones.some(zone => (
+        distanceMeters(point, zone.center) <= Number(zone.radius ?? 0) + NO_FLY_BUFFER_METERS
+    ));
+}
+
+function midpoint(a: LatLng, b: LatLng): LatLng {
+    return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+}
+
+function isReasonableDemoPoint(point: LatLng, mapConfig: MapConfig | null) {
+    if (!Array.isArray(point) || point.length !== 2 || !Number.isFinite(point[0]) || !Number.isFinite(point[1])) {
+        return false;
+    }
+    if (!mapConfig) return true;
+
+    const start = mapConfig.start ?? mapConfig.depot;
+    const goal = mapConfig.goal ?? start;
+    if (!start || !goal) return true;
+
+    const demoCenter = midpoint(start, goal);
+    const mapSpan = distanceMeters(start, goal);
+    const maxRadius = Math.max(450, Math.min(550, mapSpan * 0.56));
+    return distanceMeters(point, demoCenter) <= maxRadius;
+}
+
+function safeDemoPoints(mapConfig: MapConfig | null) {
+    const noFlyZones = mapConfig?.no_fly_zones ?? [];
+    const filtered = DEMO_SAFE_ORDER_POINTS.filter(point => (
+        isReasonableDemoPoint(point, mapConfig)
+        && !isInsideNoFlyZone(point, noFlyZones)
+    ));
+    if (filtered.length >= 2) return filtered;
+
+    const fallback = DEMO_SAFE_ORDER_POINTS.filter(point => !isInsideNoFlyZone(point, noFlyZones));
+    return fallback.length >= 2 ? fallback : DEMO_SAFE_ORDER_POINTS;
+}
+
+function createRandomOrders(count: number, mapConfig: MapConfig | null): DraftOrder[] {
     const safeCount = clampOrderCount(count);
     const timestamp = Date.now();
+    const points = safeDemoPoints(mapConfig);
     return Array.from({ length: safeCount }).map((_, idx) => {
-        const pickupIndex = randomIndex(SAFE_ORDER_POINTS.length);
-        let dropoffIndex = randomIndex(SAFE_ORDER_POINTS.length);
+        const pickupIndex = randomIndex(points.length);
+        let dropoffIndex = randomIndex(points.length);
         if (dropoffIndex === pickupIndex) {
-            dropoffIndex = (dropoffIndex + 1) % SAFE_ORDER_POINTS.length;
+            dropoffIndex = (dropoffIndex + 1) % points.length;
         }
 
         return {
             orderId: `random_order_${timestamp}_${idx + 1}`,
-            pickup: SAFE_ORDER_POINTS[pickupIndex],
-            dropoff: SAFE_ORDER_POINTS[dropoffIndex],
+            pickup: points[pickupIndex],
+            dropoff: points[dropoffIndex],
             payloadKg: Number((0.5 + Math.random() * 2.5).toFixed(1)),
             priority: randomPriorities[randomIndex(randomPriorities.length)]
         };
@@ -131,6 +188,7 @@ export default function OrderManagementModal({
     draftOrder,
     draftOrders,
     activeSimId,
+    mapConfig,
     mapInteractionMode,
     importError,
     canStartWithOrders,
@@ -282,9 +340,9 @@ export default function OrderManagementModal({
                                     <button
                                         data-testid="generate-random-orders"
                                         onClick={() => {
-                                            const orders = createRandomOrders(randomCount);
+                                            const orders = createRandomOrders(randomCount, mapConfig);
                                             onAddDraftOrders(orders);
-                                            setRandomHint(`Đã tạo ${orders.length} đơn ngẫu nhiên từ các điểm demo an toàn.`);
+                                            setRandomHint(`Đã tạo ${orders.length} đơn ngẫu nhiên từ các điểm demo hợp lệ.`);
                                         }}
                                         className="w-full rounded bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700"
                                     >
@@ -343,7 +401,11 @@ export default function OrderManagementModal({
                     <button
                         data-testid="start-simulation"
                         disabled={submitDisabled}
-                        onClick={activeSimId ? onSubmitDraftOrders : onStartWithDraftOrders}
+                        onClick={() => {
+                            if (submitDisabled) return;
+                            const sent = activeSimId ? onSubmitDraftOrders() : onStartWithDraftOrders();
+                            if (sent) onClose();
+                        }}
                         className="rounded bg-blue-600 px-4 py-2 text-xs font-bold text-white hover:bg-blue-700 disabled:bg-slate-300 disabled:text-slate-500"
                     >
                         {activeSimId ? 'Gửi thêm đơn hàng' : 'Bắt đầu mô phỏng'}

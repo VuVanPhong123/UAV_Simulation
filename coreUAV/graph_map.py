@@ -271,6 +271,25 @@ class WaypointGraph:
             raise ValueError("latlng values must be finite numbers")
         return self._get_nearest_node([lat, lon])
 
+    def latlng_to_utm(self, latlng):
+        if not isinstance(latlng, (list, tuple)) or len(latlng) != 2:
+            raise ValueError("latlng must be a [lat, lon] pair")
+        lat = float(latlng[0])
+        lon = float(latlng[1])
+        if not np.isfinite(lat) or not np.isfinite(lon):
+            raise ValueError("latlng values must be finite numbers")
+        return self.transformer.transform(lon, lat)
+
+    def is_latlng_within_bounds(self, latlng, margin_cells=0):
+        x, y = self.latlng_to_utm(latlng)
+        margin = max(0.0, float(margin_cells)) * self.resolution
+        max_x = self.min_x + (self.cols - 1) * self.resolution
+        max_y = self.min_y + (self.rows - 1) * self.resolution
+        return (
+            self.min_x - margin <= x <= max_x + margin
+            and self.min_y - margin <= y <= max_y + margin
+        )
+
     def heuristic(self, a, b):
         return np.hypot(a[0]-b[0], a[1]-b[1]) * self.resolution
 
