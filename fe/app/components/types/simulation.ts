@@ -243,7 +243,7 @@ export const DEFAULT_LAYER_TOGGLES: LayerToggles = {
     pathHistory: true,
     dynamicObstacles: true,
     orders: true,
-    windShadow: false,
-    sensorRange: false,
-    weatherOverlay: false
+    windShadow: true,
+    sensorRange: true,
+    weatherOverlay: true
 };

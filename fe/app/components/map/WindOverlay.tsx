@@ -41,7 +41,10 @@ export default function WindOverlay({ windDir, windSpeed }: WindOverlayProps) {
                         top: streak.top,
                         left: streak.left,
                         width: streak.width,
-                        animation: `wind-blow ${streak.duration} linear infinite`,
+                        animationName: 'wind-blow',
+                        animationDuration: streak.duration,
+                        animationTimingFunction: 'linear',
+                        animationIterationCount: 'infinite',
                         animationDelay: streak.delay
                     }}
                 />

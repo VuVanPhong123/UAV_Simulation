@@ -192,11 +192,12 @@ def main():
         if world is None or transformer is None:
             return
 
-        shadow_utm = world.graph.get_wind_shadow_nodes(world.wind_dir, config["drone"]["normal_altitude"])
         shadow_gps = []
-        for (x, y) in shadow_utm:
-            lon, lat = transformer.transform(x, y)
-            shadow_gps.append([lat, lon])
+        if world.wind_speed > 0:
+            shadow_utm = world.graph.get_wind_shadow_nodes(world.wind_dir, config["drone"]["normal_altitude"])
+            for (x, y) in shadow_utm:
+                lon, lat = transformer.transform(x, y)
+                shadow_gps.append([lat, lon])
         ws.send(json.dumps({
             "type": "wind_shadow_zones",
             "simId": current_sim_id(),
@@ -406,8 +407,7 @@ def main():
                         SYSTEM_DRONE_ID
                     )
                 send_all_telemetry()
-                if send_wind_shadow_by_default:
-                    send_wind_shadow_zones()
+                send_wind_shadow_zones()
                 drain_world_events()
                 is_running = True
                 print(f"Bat dau simulation {sim_id} cho {frontend_id} voi {drone_count} drone")
@@ -450,8 +450,7 @@ def main():
                     f"Weather changed: wind_to={world.wind_dir} deg, speed={world.wind_speed} m/s, temp={world.ambient_temp} C, rain={'on' if world.is_raining else 'off'}. Replanning paths.",
                     SYSTEM_DRONE_ID
                 )
-                if send_wind_shadow_by_default:
-                    send_wind_shadow_zones()
+                send_wind_shadow_zones()
                 send_all_planned_paths()
                 send_all_telemetry()
                 drain_world_events()
@@ -501,8 +500,7 @@ def main():
                     step = 0
                     telemetry_counter = 0
                     send_all_telemetry()
-                    if send_wind_shadow_by_default:
-                        send_wind_shadow_zones()
+                    send_wind_shadow_zones()
                     send_all_planned_paths()
                     drain_world_events()
                     last_path_ids = mark_current_paths()

@@ -702,6 +702,7 @@ class SimulationWorld:
         agent.current_mission_id = None
         agent.available = True
         agent.current_target_type = "idle"
+        agent.current_target_node = agent.drone.node
         agent.path = []
         agent.path_index = 0
         agent.drone.status = DroneStatus.IDLE.value
@@ -1058,6 +1059,25 @@ class SimulationWorld:
 
         agent.drone.update_temperature(dt, self.ambient_temp)
 
+    def _has_active_work(self):
+        active_order_statuses = {
+            OrderStatus.PENDING.value,
+            OrderStatus.ASSIGNED.value,
+            OrderStatus.GOING_TO_PICKUP.value,
+            OrderStatus.PICKED_UP.value,
+            OrderStatus.DELIVERING.value,
+        }
+        active_mission_statuses = {
+            MissionStatus.PLANNED.value,
+            MissionStatus.TO_PICKUP.value,
+            MissionStatus.PICKUP_ARRIVED.value,
+            MissionStatus.TO_DROPOFF.value,
+        }
+        return (
+            any(order.status in active_order_statuses for order in self.orders.values())
+            or any(mission.status in active_mission_statuses for mission in self.missions.values())
+        )
+
     def step(self):
         self.step_count += 1
         dt = self.time_step
@@ -1076,9 +1096,12 @@ class SimulationWorld:
             if agent.drone.status == DroneStatus.FLYING.value:
                 self._move_agent(agent, dt)
 
-        if self.orders and self.step_count >= self.max_steps:
+        if not self.idle_on_start and self.step_count >= self.max_steps and self._has_active_work():
             for agent in self.get_agents():
-                if agent.drone.status not in TERMINAL_STATUSES:
+                if (
+                    agent.drone.status not in TERMINAL_STATUSES
+                    and (agent.current_mission_id or agent.current_order_id)
+                ):
                     agent.drone.status = DroneStatus.FAILED.value
                     if agent.current_mission_id:
                         self._fail_current_mission(agent, "Simulation reached max steps.")

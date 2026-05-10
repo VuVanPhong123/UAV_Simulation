@@ -191,6 +191,17 @@ export function useSimulationSocket() {
         });
     }, [activeSimId, addLocalEvent, sendJson]);
 
+    const requestWindShadow = useCallback(() => {
+        if (!activeSimId) {
+            addLocalEvent('warning', 'NO_ACTIVE_SIMULATION', 'Start a simulation before requesting wind shadow zones.');
+            return false;
+        }
+        return sendJson({
+            type: 'request_wind_shadow',
+            simId: activeSimId
+        });
+    }, [activeSimId, addLocalEvent, sendJson]);
+
     useEffect(() => {
         const ws = new WebSocket('ws://localhost:8080');
         wsRef.current = ws;
@@ -329,6 +340,7 @@ export function useSimulationSocket() {
         addObstacle,
         submitOrderBatch,
         dispatchOrders,
+        requestWindShadow,
         clearSessionVisuals
     };
 }

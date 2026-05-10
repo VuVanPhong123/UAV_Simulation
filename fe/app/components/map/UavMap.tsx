@@ -231,6 +231,12 @@ export default function UavMap({
                     />
                 )}
 
+                {layers.windShadow && sampledZones.length === 0 && (
+                    <div className="absolute right-4 top-32 z-[500] rounded border border-emerald-200 bg-white px-3 py-2 text-xs font-bold text-emerald-700 shadow-sm">
+                        Chưa có dữ liệu vùng ảnh hưởng gió. Hãy áp dụng gió hoặc bật gió &gt; 0.
+                    </div>
+                )}
+
                 {layers.windShadow && sampledZones.map((pos, idx) => (
                     <CircleMarker key={`shadow-${idx}`} center={pos} radius={2} pathOptions={{ color: '#22c55e', fillColor: '#22c55e', fillOpacity: 0.5 }} />
                 ))}
@@ -285,10 +291,6 @@ export default function UavMap({
                     );
                 })}
 
-                {layers.sensorRange && selectedDrone?.pos && (
-                    <Circle center={selectedDrone.pos} radius={30} pathOptions={{ color: droneColors(selectedDrone.status).halo, fillColor: droneColors(selectedDrone.status).halo, fillOpacity: 0.12, weight: 1, dashArray: '4,4' }} />
-                )}
-
                 {Object.values(drones).map((drone: DroneTelemetry) => {
                     if (!drone.pos) return null;
                     const droneId = drone.droneId ?? 'drone_1';
@@ -304,6 +306,9 @@ export default function UavMap({
                             radius={selected ? 10 : 7}
                             pathOptions={{ color: colors.color, fillColor: colors.color, fillOpacity: 1, weight: selected ? 3 : 2 }}
                             battery={typeof battery === 'number' ? battery : undefined}
+                            showSensorRange={layers.sensorRange && selected}
+                            sensorRangeMeters={selected ? 30 : undefined}
+                            sensorPathOptions={{ color: colors.halo, fillColor: colors.halo, fillOpacity: 0.12, weight: 1, dashArray: '4,4' }}
                             onSelect={onSelectDrone}
                         />
                     );

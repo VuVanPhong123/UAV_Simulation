@@ -79,8 +79,14 @@ export default function GcsDashboard() {
     }, []);
 
     const handleLayerToggle = useCallback((key: keyof LayerToggles) => {
-        setLayers(prev => ({ ...prev, [key]: !prev[key] }));
-    }, []);
+        setLayers(prev => {
+            const enabled = !prev[key];
+            if (key === 'windShadow' && enabled) {
+                socket.requestWindShadow();
+            }
+            return { ...prev, [key]: enabled };
+        });
+    }, [socket]);
 
     const handleMapClick = useCallback((latlng: LatLng) => {
         if (mapInteractionMode === 'select_pickup') {

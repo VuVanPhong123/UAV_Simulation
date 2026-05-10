@@ -361,7 +361,7 @@ function handleMessage(ws, rawMessage) {
         return;
     }
 
-    if (['command', 'weather_update', 'add_obstacle', 'order_batch', 'dispatch_orders'].includes(data.type)) {
+    if (['command', 'weather_update', 'add_obstacle', 'order_batch', 'dispatch_orders', 'request_wind_shadow'].includes(data.type)) {
         routeFrontendMessage(ws, data);
         return;
     }

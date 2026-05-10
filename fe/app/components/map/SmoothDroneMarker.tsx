@@ -6,6 +6,7 @@ import type { PathOptions } from 'leaflet';
 import type { DroneTelemetry, LatLng } from '../types/simulation';
 
 const CircleMarker = dynamic(() => import('react-leaflet').then(mod => mod.CircleMarker), { ssr: false });
+const Circle = dynamic(() => import('react-leaflet').then(mod => mod.Circle), { ssr: false });
 const Tooltip = dynamic(() => import('react-leaflet').then(mod => mod.Tooltip), { ssr: false });
 
 const FALLBACK_ANIMATION_MS = 950;
@@ -22,6 +23,9 @@ type SmoothDroneMarkerProps = {
     radius: number;
     pathOptions: PathOptions;
     battery: number | undefined;
+    showSensorRange?: boolean;
+    sensorRangeMeters?: number;
+    sensorPathOptions?: PathOptions;
     onSelect: (droneId: string) => void;
 };
 
@@ -73,6 +77,9 @@ export default function SmoothDroneMarker({
     radius,
     pathOptions,
     battery,
+    showSensorRange = false,
+    sensorRangeMeters = 30,
+    sensorPathOptions,
     onSelect
 }: SmoothDroneMarkerProps) {
     const initialPos = isValidLatLng(drone.pos) ? drone.pos : null;
@@ -163,23 +170,33 @@ export default function SmoothDroneMarker({
     const markerRadius = active ? Math.max(radius + 4, 11) : radius;
 
     return (
-        <CircleMarker
-            center={displayPos}
-            radius={markerRadius}
-            eventHandlers={{
-                click: () => onSelect(droneId),
-                mouseover: () => setHovered(true),
-                mouseout: () => setHovered(false)
-            }}
-            pathOptions={{
-                ...pathOptions,
-                weight: active ? 4 : pathOptions.weight,
-                className: 'cursor-pointer'
-            }}
-        >
-            <Tooltip permanent={active} direction="bottom" className="building-label">
-                {droneId} / {drone.status ?? '--'} / {typeof battery === 'number' ? `${battery.toFixed(0)}%` : '--'}
-            </Tooltip>
-        </CircleMarker>
+        <>
+            {showSensorRange && selected && (
+                <Circle
+                    center={displayPos}
+                    radius={sensorRangeMeters}
+                    interactive={false}
+                    pathOptions={sensorPathOptions}
+                />
+            )}
+            <CircleMarker
+                center={displayPos}
+                radius={markerRadius}
+                eventHandlers={{
+                    click: () => onSelect(droneId),
+                    mouseover: () => setHovered(true),
+                    mouseout: () => setHovered(false)
+                }}
+                pathOptions={{
+                    ...pathOptions,
+                    weight: active ? 4 : pathOptions.weight,
+                    className: 'cursor-pointer'
+                }}
+            >
+                <Tooltip permanent={active} direction="bottom" className="building-label">
+                    {droneId} / {drone.status ?? '--'} / {typeof battery === 'number' ? `${battery.toFixed(0)}%` : '--'}
+                </Tooltip>
+            </CircleMarker>
+        </>
     );
 }
