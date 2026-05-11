@@ -8,6 +8,7 @@ import ControlPanel from '../panels/ControlPanel';
 import DroneListPanel from '../panels/DroneListPanel';
 import EventLogPanel from '../panels/EventLogPanel';
 import LayerTogglePanel from '../panels/LayerTogglePanel';
+import NoFlyZonePanel, { type NoFlyZoneConfig } from '../panels/NoFlyZonePanel';
 import ObstaclePanel from '../panels/ObstaclePanel';
 import TelemetryPanel from '../panels/TelemetryPanel';
 import WeatherPanel from '../panels/WeatherPanel';
@@ -29,6 +30,7 @@ import type {
     DraftOrder,
     DroneTelemetry,
     DronesById,
+    DynamicNoFlyZone,
     EventFilter,
     EventLogEntry,
     LayerToggles,
@@ -61,6 +63,8 @@ type RightDetailPanelProps = {
     eventLogs: EventLogEntry[];
     weather: WeatherState;
     obstacleConfig: ObstacleConfig;
+    noFlyZoneConfig: NoFlyZoneConfig;
+    dynamicNoFlyZones: DynamicNoFlyZone[];
     layers: LayerToggles;
     droneCount: number;
     canStartWithOrders: boolean;
@@ -88,6 +92,7 @@ type RightDetailPanelProps = {
     onWeatherChange: (key: keyof WeatherState, value: number | boolean) => void;
     onApplyWeather: () => void;
     onObstacleChange: (key: keyof ObstacleConfig, value: number | ObstacleType) => void;
+    onNoFlyZoneChange: (key: keyof NoFlyZoneConfig, value: number) => void;
     onLayerToggle: (key: keyof LayerToggles) => void;
     onSelectOrder: (orderId: string) => void;
     onSelectMission: (missionId: string) => void;
@@ -390,6 +395,14 @@ export default function RightDetailPanel(props: RightDetailPanelProps) {
                             onChange={props.onObstacleChange}
                             isPlacingObstacle={props.mapInteractionMode === 'obstacle'}
                             onStartPlacement={() => props.onSetMapInteractionMode('obstacle')}
+                            onCancelPlacement={() => props.onSetMapInteractionMode('none')}
+                        />
+                        <NoFlyZonePanel
+                            config={props.noFlyZoneConfig}
+                            zones={props.dynamicNoFlyZones}
+                            mapInteractionMode={props.mapInteractionMode}
+                            onChange={props.onNoFlyZoneChange}
+                            onStartPlacement={() => props.onSetMapInteractionMode('no_fly_zone')}
                             onCancelPlacement={() => props.onSetMapInteractionMode('none')}
                         />
                     </>

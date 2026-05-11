@@ -69,7 +69,7 @@ export type PathHistoryByDrone = Record<string, LatLng[]>;
 
 export type ActiveDashboardSection = 'overview' | 'orders' | 'drones' | 'environment' | 'map_tools' | 'events';
 export type EventFilter = 'all' | 'selected_drone' | 'selected_order' | 'selected_mission';
-export type MapInteractionMode = 'none' | 'obstacle' | 'select_pickup' | 'select_dropoff';
+export type MapInteractionMode = 'none' | 'obstacle' | 'no_fly_zone' | 'select_pickup' | 'select_dropoff';
 export type OrderPriority = 'low' | 'normal' | 'high' | 'urgent';
 
 export type WeatherState = {
@@ -90,6 +90,14 @@ export type DynamicObstacle = LatLng | {
     radius: number;
     height: number;
     obstacleType: ObstacleType;
+};
+
+export type DynamicNoFlyZone = {
+    id: string;
+    center: LatLng;
+    radius: number;
+    height?: number;
+    label?: string;
 };
 
 export type OrderStatus =

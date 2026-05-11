@@ -33,6 +33,7 @@ class WaypointGraph:
         self.valid_masks = None
         self.buildings = None
         self.dynamic_obstacles = []
+        self.dynamic_no_fly_zones = []
         if self.performance_config.get("use_map_cache", True):
             map_id = config.get("map", {}).get("map_id", "hanoi_default")
             try:
@@ -54,6 +55,7 @@ class WaypointGraph:
         print("[Graph] Building legacy flight grid...")
         self._build_2_5d_grid(config)
         self.dynamic_obstacles = []
+        self.dynamic_no_fly_zones = []
         
         print(f"-> 2.5D environment ready with {self.cols}x{self.rows} grid.")
 
@@ -150,6 +152,26 @@ class WaypointGraph:
             'height': float(height)
         })
 
+    def add_dynamic_no_fly_zone(self, pos_utm, radius, height=float("inf")):
+        self.dynamic_no_fly_zones.append({
+            'pos': pos_utm,
+            'radius': float(radius),
+            'height': float(height)
+        })
+
+    def is_in_dynamic_no_fly_zone(self, node, altitude=None):
+        x, y = self.nodes.get(node, (0, 0))
+        for zone in getattr(self, 'dynamic_no_fly_zones', []):
+            zx, zy = zone['pos']
+            radius = float(zone.get('radius', 0.0))
+            height = float(zone.get('height', float('inf')))
+            if np.hypot(x - zx, y - zy) <= (radius + getattr(self, 'safety_margin', 5.0)):
+                if altitude is None:
+                    return True
+                if np.isinf(height) or altitude <= height + getattr(self, 'safety_margin', 5.0):
+                    return True
+        return False
+
     def is_in_dynamic_obs(self, node, altitude=None):
         x, y = self.nodes.get(node, (0, 0))
         for obs in self.dynamic_obstacles:
@@ -183,12 +205,15 @@ class WaypointGraph:
             return False
         elif self.get_height(node) + self.safety_margin >= altitude:
             return False
+        if self.is_in_dynamic_no_fly_zone(node, altitude):
+            return False
         if self.is_in_dynamic_obs(node, altitude):
             return False
         return True
     
     def clear_dynamic_obstacles(self):
         self.dynamic_obstacles = []
+        self.dynamic_no_fly_zones = []
         print("   [Graph] Da don dep toan bo vat can dong khoi ban do.")
     
     def _build_2_5d_grid(self, config):
@@ -388,6 +413,8 @@ class WaypointGraph:
 
                 if getattr(self, 'is_in_dynamic_obs', lambda x, altitude=None: False)(nxt, current_altitude):
                     continue
+                if getattr(self, 'is_in_dynamic_no_fly_zone', lambda x, altitude=None: False)(nxt, current_altitude):
+                    continue
                 if self.is_in_nfz(nxt):
                     continue
                 if self.get_height(nxt) >= current_altitude and nxt != goal and nxt not in self.charging_stations: 
@@ -560,6 +587,7 @@ class WaypointGraph:
 
     def clear_dynamic_obstacles(self):
         self.dynamic_obstacles = []
+        self.dynamic_no_fly_zones = []
         if self.performance_config.get("verbose_planner_logs", False):
             print("   [Graph] Cleared dynamic obstacles.")
 

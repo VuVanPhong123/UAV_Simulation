@@ -26,8 +26,27 @@ type SmoothDroneMarkerProps = {
     showSensorRange?: boolean;
     sensorRangeMeters?: number;
     sensorPathOptions?: PathOptions;
+    markerPane?: string;
+    sensorPane?: string;
     onSelect: (droneId: string) => void;
 };
+
+export const ALTITUDE_COLOR_BANDS = [
+    { key: 'low', label: 'Thấp <30m', color: '#16a34a', halo: '#bbf7d0' },
+    { key: 'medium', label: 'Trung bình 30-45m', color: '#2563eb', halo: '#bfdbfe' },
+    { key: 'high', label: 'Cao 45-60m', color: '#ea580c', halo: '#fed7aa' },
+    { key: 'very-high', label: 'Rất cao ≥60m', color: '#7e22ce', halo: '#ddd6fe' }
+] as const;
+
+export function getUavAltitudeColors(altitude?: number | null) {
+    if (typeof altitude !== 'number' || !Number.isFinite(altitude)) {
+        return { color: '#475569', halo: '#cbd5e1' };
+    }
+    if (altitude < 30) return ALTITUDE_COLOR_BANDS[0];
+    if (altitude < 45) return ALTITUDE_COLOR_BANDS[1];
+    if (altitude < 60) return ALTITUDE_COLOR_BANDS[2];
+    return ALTITUDE_COLOR_BANDS[3];
+}
 
 function isValidLatLng(pos: LatLng | undefined): pos is LatLng {
     return Array.isArray(pos)
@@ -80,6 +99,8 @@ export default function SmoothDroneMarker({
     showSensorRange = false,
     sensorRangeMeters = 30,
     sensorPathOptions,
+    markerPane,
+    sensorPane,
     onSelect
 }: SmoothDroneMarkerProps) {
     const initialPos = isValidLatLng(drone.pos) ? drone.pos : null;
@@ -168,6 +189,9 @@ export default function SmoothDroneMarker({
 
     const active = selected || hovered;
     const markerRadius = active ? Math.max(radius + 4, 11) : radius;
+    const altitudeText = typeof drone.altitude === 'number' && Number.isFinite(drone.altitude)
+        ? `${drone.altitude.toFixed(0)}m`
+        : '--';
 
     return (
         <>
@@ -176,12 +200,14 @@ export default function SmoothDroneMarker({
                     center={displayPos}
                     radius={sensorRangeMeters}
                     interactive={false}
+                    pane={sensorPane}
                     pathOptions={sensorPathOptions}
                 />
             )}
             <CircleMarker
                 center={displayPos}
                 radius={markerRadius}
+                pane={markerPane}
                 eventHandlers={{
                     click: () => onSelect(droneId),
                     mouseover: () => setHovered(true),
@@ -194,7 +220,7 @@ export default function SmoothDroneMarker({
                 }}
             >
                 <Tooltip permanent={active} direction="bottom" className="building-label">
-                    {droneId} / {drone.status ?? '--'} / {typeof battery === 'number' ? `${battery.toFixed(0)}%` : '--'}
+                    {droneId} / {drone.status ?? '--'} / {typeof battery === 'number' ? `${battery.toFixed(0)}%` : '--'} / {altitudeText}
                 </Tooltip>
             </CircleMarker>
         </>

@@ -73,6 +73,7 @@ class SimulationWorld:
         self.pending_order_updates = []
         self.pending_mission_updates = []
         self.obstacles = []
+        self.no_fly_zones = []
         self.proximity_cooldowns = {}
         self.drone_count = max(1, min(5, int(drone_count or 1)))
         self.agents = {}
@@ -90,6 +91,7 @@ class SimulationWorld:
         self.pending_order_updates = []
         self.pending_mission_updates = []
         self.obstacles = []
+        self.no_fly_zones = []
         self.proximity_cooldowns = {}
         self.orders = {}
         self.missions = {}
@@ -741,6 +743,66 @@ class SimulationWorld:
             "detected_by": set(),
             "graph_added": False,
         })
+
+    def add_no_fly_zone(self, latlng, radius, height=None):
+        if not isinstance(latlng, (list, tuple)) or len(latlng) != 2:
+            raise ValueError("No-fly zone center must be a [lat, lon] pair.")
+        radius_value = float(radius)
+        if not math.isfinite(radius_value) or radius_value <= 0:
+            raise ValueError("No-fly zone radius must be a positive number.")
+
+        height_value = float("inf") if height is None else float(height)
+        if not math.isinf(height_value) and (not math.isfinite(height_value) or height_value <= 0):
+            raise ValueError("No-fly zone height must be a positive number.")
+
+        pos_utm = self.graph.latlng_to_utm(latlng)
+        self.no_fly_zones.append({
+            "center": [float(latlng[0]), float(latlng[1])],
+            "pos": pos_utm,
+            "radius": radius_value,
+            "height": height_value,
+        })
+        self.graph.add_dynamic_no_fly_zone(pos_utm, radius_value, height_value)
+        self.queue_event(
+            "system",
+            EventLevel.WARNING.value,
+            EventCode.NO_FLY_ZONE_ADDED.value,
+            f"No-fly zone added: r={radius_value:.1f}m h={'full' if math.isinf(height_value) else f'{height_value:.1f}m'}.",
+        )
+
+        replanned = []
+        failed = []
+        for agent in self.get_agents():
+            is_active = (
+                agent.current_target_type != "idle"
+                or agent.current_order_id is not None
+                or agent.current_mission_id is not None
+            )
+            if not is_active or agent.drone.status in TERMINAL_STATUSES or agent.drone.status == DroneStatus.CHARGING.value:
+                continue
+
+            was_paused = agent.drone.status == DroneStatus.PAUSED.value
+            agent.drone.node = self._current_grid_node(agent)
+            if not was_paused:
+                agent.drone.status = DroneStatus.PLANNING.value
+
+            if self._replan_agent(agent, EventCode.NO_FLY_ZONE_REPLAN.value, "Path replanned after no-fly zone update."):
+                if was_paused:
+                    agent.drone.status = DroneStatus.PAUSED.value
+                replanned.append(agent.drone_id)
+            else:
+                failed.append(agent.drone_id)
+                self.queue_event(
+                    agent.drone_id,
+                    EventLevel.ERROR.value,
+                    EventCode.NO_FLY_ZONE_REPLAN_FAILED.value,
+                    "No safe path after no-fly zone update.",
+                )
+
+        return {
+            "replanned": replanned,
+            "failed": failed,
+        }
 
     def _detect_obstacles(self, agent):
         blocking_detected = False

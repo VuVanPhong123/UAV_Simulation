@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
     DroneTelemetry,
+    DynamicNoFlyZone,
     DynamicObstacle,
     DronesById,
     DeliveryOrder,
@@ -161,6 +162,18 @@ export function useSimulationSocket() {
             type: 'add_obstacle',
             simId: activeSimId,
             payload: obstacle
+        });
+    }, [activeSimId, addLocalEvent, sendJson]);
+
+    const addNoFlyZone = useCallback((zone: DynamicNoFlyZone) => {
+        if (!activeSimId) {
+            addLocalEvent('warning', 'NO_ACTIVE_SIMULATION', 'Start a simulation before adding no-fly zones.');
+            return false;
+        }
+        return sendJson({
+            type: 'add_no_fly_zone',
+            simId: activeSimId,
+            payload: zone
         });
     }, [activeSimId, addLocalEvent, sendJson]);
 
@@ -338,6 +351,7 @@ export function useSimulationSocket() {
         resetSimulation: () => sendCommand('reset'),
         applyWeather,
         addObstacle,
+        addNoFlyZone,
         submitOrderBatch,
         dispatchOrders,
         requestWindShadow,

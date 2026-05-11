@@ -236,8 +236,8 @@ def main():
             "path3d": gps_path3d
         }
 
-    def send_planned_path_for_agent(agent):
-        if not agent.path:
+    def send_planned_path_for_agent(agent, include_empty=False):
+        if not agent.path and not include_empty:
             return
         payload = planned_path_payload(agent)
         ws.send(json.dumps({
@@ -425,6 +425,27 @@ def main():
                     continue
                 world.add_obstacle(pos, radius=radius, height=height, obstacle_type=obstacle_type)
                 send_event(EventLevel.WARNING.value, EventCode.OBSTACLE_ADDED.value, "Obstacle added by user.")
+                drain_world_events()
+
+            elif msg_type == "add_no_fly_zone":
+                if not is_assigned or reject_wrong_sim(data):
+                    continue
+                payload = data.get("payload") or {}
+                center = payload.get("center") or payload.get("pos") or data.get("center") or data.get("pos")
+                radius = payload.get("radius", 60.0)
+                height = payload.get("height", config.get("drone", {}).get("max_altitude", 120.0))
+                if not center:
+                    send_event(EventLevel.ERROR.value, EventCode.WORKER_ERROR.value, "No-fly zone message missing center.")
+                    continue
+
+                before_path_ids = mark_current_paths()
+                world.add_no_fly_zone(center, radius=radius, height=height)
+                drain_order_mission_updates()
+                for agent in world.get_agents():
+                    if id(agent.path) != before_path_ids.get(agent.drone_id):
+                        send_planned_path_for_agent(agent, include_empty=True)
+                        last_path_ids[agent.drone_id] = id(agent.path)
+                send_all_telemetry()
                 drain_world_events()
 
             elif msg_type == "weather_update":

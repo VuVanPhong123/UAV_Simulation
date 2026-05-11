@@ -7,11 +7,13 @@ import type { Layer } from 'leaflet';
 import MapEvents from './MapEvents';
 import MapResizeController from './MapResizeController';
 import MapZoomSlider from './MapZoomSlider';
-import SmoothDroneMarker from './SmoothDroneMarker';
+import AltitudeLegend from './AltitudeLegend';
+import SmoothDroneMarker, { getUavAltitudeColors } from './SmoothDroneMarker';
 import WindOverlay from './WindOverlay';
 import type {
     DroneTelemetry,
     DronesById,
+    DynamicNoFlyZone,
     DynamicObstacle,
     LatLng,
     LayerToggles,
@@ -31,6 +33,7 @@ const Polyline = dynamic(() => import('react-leaflet').then(mod => mod.Polyline)
 const CircleMarker = dynamic(() => import('react-leaflet').then(mod => mod.CircleMarker), { ssr: false });
 const Tooltip = dynamic(() => import('react-leaflet').then(mod => mod.Tooltip), { ssr: false });
 const Circle = dynamic(() => import('react-leaflet').then(mod => mod.Circle), { ssr: false });
+const Pane = dynamic(() => import('react-leaflet').then(mod => mod.Pane), { ssr: false });
 
 type UavMapProps = {
     buildings: GeoJsonObject | null;
@@ -44,6 +47,7 @@ type UavMapProps = {
     plannedPaths: PlannedPathsByDrone;
     pathHistoryByDrone: PathHistoryByDrone;
     dynamicObstacles: DynamicObstacle[];
+    dynamicNoFlyZones: DynamicNoFlyZone[];
     windShadowZones: LatLng[];
     layers: LayerToggles;
     windDir: number;
@@ -55,16 +59,7 @@ type UavMapProps = {
     onSelectOrder?: (orderId: string) => void;
 };
 
-function droneColors(status?: string) {
-    if (status === 'failed' || status === 'emergency_landing') {
-        return { color: '#dc2626', halo: '#fca5a5' };
-    }
-    if (status === 'charging') return { color: '#f59e0b', halo: '#fde68a' };
-    if (status === 'success') return { color: '#16a34a', halo: '#86efac' };
-    if (status === 'paused') return { color: '#64748b', halo: '#cbd5e1' };
-    if (status === 'rerouting' || status === 'planning') return { color: '#f97316', halo: '#fed7aa' };
-    return { color: '#2563eb', halo: '#93c5fd' };
-}
+const HIDDEN_ORDER_MARKER_STATUSES = new Set(['completed', 'failed', 'canceled']);
 
 export default function UavMap({
     buildings,
@@ -78,6 +73,7 @@ export default function UavMap({
     plannedPaths,
     pathHistoryByDrone,
     dynamicObstacles,
+    dynamicNoFlyZones,
     windShadowZones,
     layers,
     windDir,
@@ -133,12 +129,16 @@ export default function UavMap({
                 ? 'Đang chọn vị trí đặt vật cản. Click lên bản đồ để đặt.'
                 : null;
 
+    const displayInteractionText = mapInteractionMode === 'no_fly_zone'
+        ? 'Đang chọn tâm vùng cấm bay...'
+        : interactionText;
+
     return (
         <div className="relative h-full min-h-0 w-full min-w-0 overflow-hidden bg-slate-100">
             {layers.weatherOverlay && <WindOverlay windDir={windDir} windSpeed={windSpeed} />}
-            {interactionText && (
+            {displayInteractionText && (
                 <div className="absolute left-4 top-4 z-[500] rounded border border-blue-200 bg-white px-3 py-2 text-xs font-bold text-blue-700 shadow-sm">
-                    {interactionText}
+                    {displayInteractionText}
                 </div>
             )}
             <MapContainer
@@ -152,6 +152,7 @@ export default function UavMap({
                 zoomDelta={0.25}
                 wheelPxPerZoomLevel={120}
                 preferCanvas={true}
+                zoomControl={false}
                 className="h-full w-full z-10"
             >
                 <MapResizeController resizeKey={resizeKey} />
@@ -164,7 +165,14 @@ export default function UavMap({
                     updateWhenIdle={true}
                     updateWhenZooming={false}
                 />
-                <MapZoomSlider />
+                <div className="leaflet-top leaflet-right" style={{ zIndex: 650 }}>
+                    <div className="leaflet-control mr-2 mt-16 flex flex-col gap-2">
+                        <MapZoomSlider />
+                        <AltitudeLegend />
+                    </div>
+                </div>
+                <Pane name="uavSensorPane" style={{ zIndex: 690, pointerEvents: 'none' }} />
+                <Pane name="uavPane" style={{ zIndex: 700 }} />
 
                 {layers.buildings && buildings && (
                     <GeoJSON
@@ -206,6 +214,17 @@ export default function UavMap({
                     </>
                 )}
 
+                {layers.noFlyZones && dynamicNoFlyZones.map(zone => (
+                    <Circle
+                        key={zone.id}
+                        center={zone.center}
+                        radius={zone.radius}
+                        pathOptions={{ color: '#dc2626', fillColor: '#ef4444', fillOpacity: 0.18, weight: 2, dashArray: '4,4' }}
+                    >
+                        <Tooltip>Vùng cấm bay</Tooltip>
+                    </Circle>
+                ))}
+
                 {layers.plannedPath && selectedDroneId && selectedPlannedPath.length > 0 && (
                     <Polyline
                         key={`planned-${selectedDroneId}`}
@@ -232,7 +251,7 @@ export default function UavMap({
                 )}
 
                 {layers.windShadow && sampledZones.length === 0 && (
-                    <div className="absolute right-4 top-32 z-[500] rounded border border-emerald-200 bg-white px-3 py-2 text-xs font-bold text-emerald-700 shadow-sm">
+                    <div className="absolute right-4 top-50 z-[500] rounded border border-emerald-200 bg-white px-3 py-2 text-xs font-bold text-emerald-700 shadow-sm">
                         Chưa có dữ liệu vùng ảnh hưởng gió. Hãy áp dụng gió hoặc bật gió &gt; 0.
                     </div>
                 )}
@@ -256,6 +275,7 @@ export default function UavMap({
                 {Object.values(orders).filter(order => {
                     const orderId = orderIdOf(order);
                     const forceVisible = selectedOrderId === orderId || selectedMissionOrderId === orderId;
+                    if (HIDDEN_ORDER_MARKER_STATUSES.has(order.status) && !forceVisible) return false;
                     return forceVisible || (layers.orders && visibleOrderIds.has(orderId));
                 }).map(order => {
                     const orderId = orderIdOf(order);
@@ -295,7 +315,7 @@ export default function UavMap({
                     if (!drone.pos) return null;
                     const droneId = drone.droneId ?? 'drone_1';
                     const selected = droneId === selectedDroneId;
-                    const colors = droneColors(drone.status);
+                    const colors = getUavAltitudeColors(drone.altitude);
                     const battery = drone.batteryPercent ?? drone.battery;
                     return (
                         <SmoothDroneMarker
@@ -309,6 +329,8 @@ export default function UavMap({
                             showSensorRange={layers.sensorRange && selected}
                             sensorRangeMeters={selected ? 30 : undefined}
                             sensorPathOptions={{ color: colors.halo, fillColor: colors.halo, fillOpacity: 0.12, weight: 1, dashArray: '4,4' }}
+                            markerPane="uavPane"
+                            sensorPane="uavSensorPane"
                             onSelect={onSelectDrone}
                         />
                     );

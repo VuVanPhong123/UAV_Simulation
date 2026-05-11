@@ -13,6 +13,7 @@ import {
     DEFAULT_LAYER_TOGGLES,
     type ActiveDashboardSection,
     type DraftOrder,
+    type DynamicNoFlyZone,
     type DynamicObstacle,
     type EventFilter,
     type LatLng,
@@ -23,6 +24,11 @@ import {
     type OrderPriority,
     type WeatherState
 } from '../types/simulation';
+
+type NoFlyZoneConfig = {
+    radius: number;
+    height: number;
+};
 
 function createDraftOrder(): DraftOrder {
     return {
@@ -41,7 +47,9 @@ export default function GcsDashboard() {
     const [buildings, setBuildings] = useState<GeoJsonObject | null>(null);
     const [weather, setWeather] = useState<WeatherState>({ wind_dir: 0, wind_speed: 0, ambient_temp: 25, is_raining: false });
     const [obstacleConfig, setObstacleConfig] = useState<ObstacleConfig>({ radius: 8, height: 25, obstacleType: 'unknown' });
+    const [noFlyZoneConfig, setNoFlyZoneConfig] = useState<NoFlyZoneConfig>({ radius: 60, height: 120 });
     const [dynamicObstacles, setDynamicObstacles] = useState<DynamicObstacle[]>([]);
+    const [dynamicNoFlyZones, setDynamicNoFlyZones] = useState<DynamicNoFlyZone[]>([]);
     const [layers, setLayers] = useState<LayerToggles>(DEFAULT_LAYER_TOGGLES);
     const [droneCount, setDroneCount] = useState(5);
     const [activeSection, setActiveSection] = useState<ActiveDashboardSection>('overview');
@@ -76,6 +84,11 @@ export default function GcsDashboard() {
 
     const handleObstacleChange = useCallback((key: keyof ObstacleConfig, value: number | ObstacleType) => {
         setObstacleConfig(prev => ({ ...prev, [key]: value }));
+    }, []);
+
+    const handleNoFlyZoneChange = useCallback((key: keyof NoFlyZoneConfig, value: number) => {
+        const normalized = Number.isFinite(value) && value > 0 ? value : key === 'height' ? 120 : 60;
+        setNoFlyZoneConfig(prev => ({ ...prev, [key]: normalized }));
     }, []);
 
     const handleLayerToggle = useCallback((key: keyof LayerToggles) => {
@@ -119,8 +132,26 @@ export default function GcsDashboard() {
             setMapInteractionMode('none');
             return;
         }
+        if (mapInteractionMode === 'no_fly_zone') {
+            const configuredHeight = Number.isFinite(noFlyZoneConfig.height) && noFlyZoneConfig.height > 0
+                ? noFlyZoneConfig.height
+                : 120;
+            const zone = {
+                id: `no_fly_zone_${Date.now()}`,
+                center: latlng,
+                radius: Number.isFinite(noFlyZoneConfig.radius) && noFlyZoneConfig.radius > 0 ? noFlyZoneConfig.radius : 60,
+                height: configuredHeight,
+                label: 'Vùng cấm bay'
+            };
+            if (socket.addNoFlyZone(zone)) {
+                setDynamicNoFlyZones(prev => [...prev, zone]);
+                addLocalEvent('info', 'NO_FLY_ZONE_PLACED', 'Đã tạo vùng cấm bay.');
+            }
+            setMapInteractionMode('none');
+            return;
+        }
         setMapInteractionMode('none');
-    }, [addLocalEvent, mapInteractionMode, obstacleConfig, socket]);
+    }, [addLocalEvent, mapInteractionMode, noFlyZoneConfig, obstacleConfig, socket]);
 
     const handleDraftChange = useCallback(<K extends keyof DraftOrder,>(key: K, value: DraftOrder[K]) => {
         setDraftOrder(prev => ({ ...prev, [key]: value }));
@@ -251,6 +282,7 @@ export default function GcsDashboard() {
         socket.resetSimulation();
         telemetryHistory.resetHistory();
         setDynamicObstacles([]);
+        setDynamicNoFlyZones([]);
         setSelectedOrderId(null);
         setSelectedMissionId(null);
         setEventFilter('all');
@@ -261,6 +293,7 @@ export default function GcsDashboard() {
         socket.stopSimulation();
         telemetryHistory.resetHistory();
         setDynamicObstacles([]);
+        setDynamicNoFlyZones([]);
         setSelectedOrderId(null);
         setSelectedMissionId(null);
         setEventFilter('all');
@@ -320,6 +353,7 @@ export default function GcsDashboard() {
                             plannedPaths={socket.plannedPaths}
                             pathHistoryByDrone={telemetryHistory.pathHistoryByDrone}
                             dynamicObstacles={dynamicObstacles}
+                            dynamicNoFlyZones={dynamicNoFlyZones}
                             windShadowZones={socket.windShadowZones}
                             layers={layers}
                             windDir={weather.wind_dir}
@@ -356,6 +390,8 @@ export default function GcsDashboard() {
                     eventLogs={socket.eventLogs}
                     weather={weather}
                     obstacleConfig={obstacleConfig}
+                    noFlyZoneConfig={noFlyZoneConfig}
+                    dynamicNoFlyZones={dynamicNoFlyZones}
                     layers={layers}
                     droneCount={droneCount}
                     batteryHistory={telemetryHistory.batteryHistory}
@@ -383,6 +419,7 @@ export default function GcsDashboard() {
                     onWeatherChange={handleWeatherChange}
                     onApplyWeather={() => socket.applyWeather(weather)}
                     onObstacleChange={handleObstacleChange}
+                    onNoFlyZoneChange={handleNoFlyZoneChange}
                     onLayerToggle={handleLayerToggle}
                     onSelectOrder={handleSelectOrder}
                     onSelectMission={handleSelectMission}
