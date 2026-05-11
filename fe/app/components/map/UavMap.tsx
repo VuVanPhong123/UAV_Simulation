@@ -154,6 +154,7 @@ export default function UavMap({
                 wheelPxPerZoomLevel={120}
                 preferCanvas={true}
                 zoomControl={false}
+                attributionControl={false}
                 className="h-full w-full z-10"
             >
                 <MapResizeController resizeKey={resizeKey} />
@@ -179,6 +180,10 @@ export default function UavMap({
                     <GeoJSON
                         key={`buildings-${layers.buildingLabels ? 'labels' : 'plain'}`}
                         data={buildings}
+                        filter={(feature: Feature<Geometry, GeoJsonProperties>) => {
+                            const geometryType = feature.geometry?.type;
+                            return geometryType !== 'Point' && geometryType !== 'MultiPoint';
+                        }}
                         style={() => ({ color: '#94a3b8', weight: 1, fillColor: '#e2e8f0', fillOpacity: 0.6 })}
                         onEachFeature={(feature: Feature<Geometry, GeoJsonProperties>, layer: Layer) => {
                             if (layers.buildingLabels && feature.properties?.estimated_height) {
@@ -329,7 +334,7 @@ export default function UavMap({
                             battery={typeof battery === 'number' ? battery : undefined}
                             showSensorRange={layers.sensorRange && selected}
                             sensorRangeMeters={selected ? 30 : undefined}
-                            sensorPathOptions={{ color: colors.halo, fillColor: colors.halo, fillOpacity: 0.12, weight: 1, dashArray: '4,4' }}
+                            sensorPathOptions={{ color: colors.halo, fillColor: colors.halo, fillOpacity: 0.52, weight: 1, dashArray: '4,4' }}
                             markerPane="uavPane"
                             sensorPane="uavSensorPane"
                             onSelect={onSelectDrone}

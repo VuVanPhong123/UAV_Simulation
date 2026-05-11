@@ -16,7 +16,7 @@ const labels: Array<[keyof LayerToggles, string]> = [
     ['pathHistory', 'Lịch sử bay'],
     ['dynamicObstacles', 'Vật cản'],
     ['orders', 'Điểm lấy/giao hàng'],
-    ['windShadow', 'Vùng ảnh hưởng gió'],
+    ['windShadow', 'Vùng cản gió'],
     ['sensorRange', 'Vùng cảm biến'],
     ['weatherOverlay', 'Hiệu ứng thời tiết']
 ];
