@@ -38,16 +38,18 @@ type OrderManagementModalProps = {
 const priorities: OrderPriority[] = ['low', 'normal', 'high', 'urgent'];
 const randomPriorities: OrderPriority[] = ['low', 'normal', 'high'];
 const NO_FLY_BUFFER_METERS = 20;
-const DEMO_SAFE_ORDER_POINTS: LatLng[] = [
-    [21.0260, 105.8500],
-    [21.0261, 105.8539],
-    [21.0286, 105.8501],
-    [21.0309, 105.8520],
-    [21.0310, 105.8569],
-    [21.0270, 105.8568],
-    [21.0252, 105.8527],
-    [21.0292, 105.8580]
-];
+const LOCAL_SAFE_ORDER_POINTS_BY_MAP: Record<string, LatLng[]> = {
+    hanoi_my_dinh_me_tri: [
+        [21.0142, 105.7814],
+        [21.0148, 105.7854],
+        [21.0162, 105.7890],
+        [21.0187, 105.7894],
+        [21.0194, 105.7856],
+        [21.0175, 105.7815],
+        [21.0129, 105.7833],
+        [21.0201, 105.7876]
+    ]
+};
 
 function clampOrderCount(value: number) {
     if (!Number.isFinite(value)) return 1;
@@ -101,14 +103,19 @@ function isReasonableDemoPoint(point: LatLng, mapConfig: MapConfig | null) {
 
 function safeDemoPoints(mapConfig: MapConfig | null) {
     const noFlyZones = mapConfig?.no_fly_zones ?? [];
-    const filtered = DEMO_SAFE_ORDER_POINTS.filter(point => (
+    const localFallback = LOCAL_SAFE_ORDER_POINTS_BY_MAP[mapConfig?.mapId ?? 'hanoi_my_dinh_me_tri']
+        ?? LOCAL_SAFE_ORDER_POINTS_BY_MAP.hanoi_my_dinh_me_tri;
+    const sourcePoints = mapConfig?.safeOrderPoints && mapConfig.safeOrderPoints.length >= 2
+        ? mapConfig.safeOrderPoints
+        : localFallback;
+    const filtered = sourcePoints.filter(point => (
         isReasonableDemoPoint(point, mapConfig)
         && !isInsideNoFlyZone(point, noFlyZones)
     ));
     if (filtered.length >= 2) return filtered;
 
-    const fallback = DEMO_SAFE_ORDER_POINTS.filter(point => !isInsideNoFlyZone(point, noFlyZones));
-    return fallback.length >= 2 ? fallback : DEMO_SAFE_ORDER_POINTS;
+    const fallback = sourcePoints.filter(point => !isInsideNoFlyZone(point, noFlyZones));
+    return fallback.length >= 2 ? fallback : sourcePoints;
 }
 
 function createRandomOrders(count: number, mapConfig: MapConfig | null): DraftOrder[] {

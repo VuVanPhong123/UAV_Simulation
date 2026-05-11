@@ -84,7 +84,7 @@ export default function UavMap({
     onSelectDrone,
     onSelectOrder
 }: UavMapProps) {
-    const defaultCenter: LatLng = [21.0285, 105.8542];
+    const defaultCenter: LatLng = [21.0163, 105.7840];
     const depot = mapConfig?.depot ?? mapConfig?.start ?? defaultCenter;
     const hasFixedGoal = mapConfig?.hasFixedGoal !== false && mapConfig?.simulationMode !== 'order_dispatch';
     const mapCenter = mapConfig ? depot : defaultCenter;
@@ -142,6 +142,7 @@ export default function UavMap({
                 </div>
             )}
             <MapContainer
+                key={`map-${mapConfig?.mapId ?? 'hanoi_my_dinh_me_tri'}`}
                 center={mapCenter}
                 zoom={17}
                 minZoom={13}
@@ -252,7 +253,7 @@ export default function UavMap({
 
                 {layers.windShadow && sampledZones.length === 0 && (
                     <div className="absolute right-4 top-50 z-[500] rounded border border-emerald-200 bg-white px-3 py-2 text-xs font-bold text-emerald-700 shadow-sm">
-                        Chưa có dữ liệu vùng ảnh hưởng gió. Hãy áp dụng gió hoặc bật gió &gt; 0.
+                        Không có gió
                     </div>
                 )}
 

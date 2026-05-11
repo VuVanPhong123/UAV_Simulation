@@ -138,6 +138,13 @@ function isValidTelemetry(message) {
   );
 }
 
+function hasCollisionTelemetry(message) {
+  if (message.type !== 'telemetry' || message.simId !== simId) return false;
+  const payload = telemetryPayload(message);
+  return ['proximity_warning', 'yielding_hold', 'climbing_avoidance', 'vertical_separated', 'continue_priority']
+    .includes(payload.collisionState);
+}
+
 function eventCode(message) {
   return message && message.payload && message.payload.code;
 }
@@ -280,13 +287,13 @@ async function runScenario() {
   send({
     type: 'request_start_simulation',
     payload: {
-      mapId: 'hanoi_default',
+      mapId: 'hanoi_my_dinh_me_tri',
       droneCount: 1,
       orderBatch: [
         {
           orderId: 'order_test_1',
-          pickup: [21.0285, 105.8542],
-          dropoff: [21.0290, 105.8550],
+          pickup: [21.0142, 105.7814],
+          dropoff: [21.0194, 105.7856],
           payloadKg: 1.2,
           priority: 'normal',
         },
@@ -368,8 +375,8 @@ async function runScenario() {
       orders: [
         {
           orderId: 'order_too_heavy',
-          pickup: [21.0285, 105.8542],
-          dropoff: [21.0290, 105.8550],
+          pickup: [21.0142, 105.7814],
+          dropoff: [21.0194, 105.7856],
           payloadKg: 999,
           priority: 'normal',
         },
@@ -420,7 +427,7 @@ async function runScenario() {
     type: 'add_obstacle',
     simId,
     payload: {
-      pos: [21.0285, 105.8542],
+      pos: [21.0163, 105.7840],
       radius: 8,
       height: 25,
       obstacleType: 'unknown',
@@ -472,41 +479,41 @@ async function runScenario() {
   send({
     type: 'request_start_simulation',
     payload: {
-      mapId: 'hanoi_default',
+      mapId: 'hanoi_my_dinh_me_tri',
       droneCount: 3,
       orderBatch: [
         {
           orderId: 'order_multi_1',
-          pickup: [21.0285, 105.8542],
-          dropoff: [21.0290, 105.8550],
+          pickup: [21.0142, 105.7814],
+          dropoff: [21.0194, 105.7856],
           payloadKg: 0.8,
           priority: 'normal',
         },
         {
           orderId: 'order_multi_2',
-          pickup: [21.0278, 105.8536],
-          dropoff: [21.0300, 105.8560],
+          pickup: [21.0175, 105.7815],
+          dropoff: [21.0187, 105.7894],
           payloadKg: 1.1,
           priority: 'high',
         },
         {
           orderId: 'order_multi_3',
-          pickup: [21.0268, 105.8528],
-          dropoff: [21.0296, 105.8538],
+          pickup: [21.0148, 105.7854],
+          dropoff: [21.0201, 105.7876],
           payloadKg: 1.5,
           priority: 'urgent',
         },
         {
           orderId: 'order_multi_4',
-          pickup: [21.0290, 105.8550],
-          dropoff: [21.0278, 105.8536],
+          pickup: [21.0194, 105.7856],
+          dropoff: [21.0142, 105.7814],
           payloadKg: 1.8,
           priority: 'normal',
         },
         {
           orderId: 'order_multi_5',
-          pickup: [21.0300, 105.8560],
-          dropoff: [21.0268, 105.8528],
+          pickup: [21.0187, 105.7894],
+          dropoff: [21.0175, 105.7815],
           payloadKg: 2.0,
           priority: 'high',
         },
@@ -557,6 +564,13 @@ async function runScenario() {
     }
   });
   pass('multi-drone planned paths received');
+
+  await waitFor(
+    hasCollisionTelemetry,
+    90000,
+    'collision avoidance telemetry observed'
+  );
+  pass('collision avoidance telemetry observed');
 
   if (activeMultiOrderCount() < 3) {
     await waitFor(

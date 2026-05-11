@@ -35,18 +35,21 @@ class WaypointGraph:
         self.dynamic_obstacles = []
         self.dynamic_no_fly_zones = []
         if self.performance_config.get("use_map_cache", True):
-            map_id = config.get("map", {}).get("map_id", "hanoi_default")
+            map_id = config.get("map", {}).get("map_id", "hanoi_my_dinh_me_tri")
             try:
                 self._load_cached_grid(map_id)
                 print(f"[Graph] Loaded map cache '{map_id}' ({self.cols}x{self.rows}, {len(self.altitude_levels)} altitude levels).")
                 print(f"-> 2.5D environment ready with {self.cols}x{self.rows} grid.")
                 return
             except Exception as exc:
+                if self.performance_config.get("require_map_cache", False):
+                    raise
                 print(f"[Graph] Cache unavailable, falling back to legacy build: {exc}")
 
         import geopandas as gpd
         print("[Graph] Loading building data for legacy 2.5D grid...")
-        self.buildings = gpd.read_file('hanoi_buildings.geojson')
+        map_id = config.get("map", {}).get("map_id", "hanoi_my_dinh_me_tri")
+        self.buildings = gpd.read_file(f'maps/{map_id}/buildings.geojson')
         
         self.buildings = self.buildings.to_crs(epsg=32648) 
         self.crs_utm = self.buildings.crs

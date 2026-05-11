@@ -50,7 +50,7 @@ def validate(map_id):
 
 def main():
     parser = argparse.ArgumentParser(description="Validate static map cache package.")
-    parser.add_argument("--map-id", default="hanoi_default")
+    parser.add_argument("--map-id", default="hanoi_my_dinh_me_tri")
     args = parser.parse_args()
     try:
         return validate(args.map_id)

@@ -1,0 +1,103 @@
+{
+  "mapId": "hanoi_my_dinh_me_tri",
+  "label": "M\u1ef9 \u0110\u00ecnh - M\u1ec5 Tr\u00ec",
+  "startLatLng": [
+    21.0163,
+    105.784
+  ],
+  "goalLatLng": [
+    21.0192,
+    105.7892
+  ],
+  "chargingStationsLatLng": [
+    [
+      21.0147,
+      105.7819
+    ],
+    [
+      21.018,
+      105.7867
+    ]
+  ],
+  "noFlyZones": [
+    {
+      "center": [
+        21.0169,
+        105.7835
+      ],
+      "radius": 55.0
+    },
+    {
+      "center": [
+        21.0177,
+        105.7872
+      ],
+      "radius": 45.0
+    }
+  ],
+  "safeOrderPoints": [
+    [
+      21.0142,
+      105.7814
+    ],
+    [
+      21.0148,
+      105.7854
+    ],
+    [
+      21.0162,
+      105.789
+    ],
+    [
+      21.0187,
+      105.7894
+    ],
+    [
+      21.0194,
+      105.7856
+    ],
+    [
+      21.0175,
+      105.7815
+    ],
+    [
+      21.0129,
+      105.7833
+    ],
+    [
+      21.0201,
+      105.7876
+    ]
+  ],
+  "buildingGeoJsonUrl": "/maps/hanoi_my_dinh_me_tri/buildings.geojson",
+  "resolution": 10.0,
+  "minX": 581055.866198472,
+  "minY": 2323773.3633707096,
+  "rows": 91,
+  "cols": 116,
+  "crs": "EPSG:32648",
+  "altitudeLevels": [
+    20.0,
+    35.0,
+    50.0
+  ],
+  "startNode": [
+    42,
+    38
+  ],
+  "goalNode": [
+    96,
+    70
+  ],
+  "chargingStationNodes": [
+    [
+      20,
+      20
+    ],
+    [
+      70,
+      57
+    ]
+  ],
+  "sourceBuildings": "fe\\public\\maps\\hanoi_my_dinh_me_tri\\buildings.geojson"
+}

@@ -219,7 +219,7 @@ function requestStartSimulation(ws, data) {
         simId,
         frontendId: frontendMeta.id,
         payload: data.payload ?? {
-            mapId: 'hanoi_default',
+            mapId: 'hanoi_my_dinh_me_tri',
             droneCount: 1
         }
     });
@@ -361,7 +361,7 @@ function handleMessage(ws, rawMessage) {
         return;
     }
 
-    if (['command', 'weather_update', 'add_obstacle', 'order_batch', 'dispatch_orders', 'request_wind_shadow'].includes(data.type)) {
+    if (['command', 'weather_update', 'add_obstacle', 'add_no_fly_zone', 'order_batch', 'dispatch_orders', 'request_wind_shadow'].includes(data.type)) {
         routeFrontendMessage(ws, data);
         return;
     }

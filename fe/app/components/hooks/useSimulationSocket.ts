@@ -26,6 +26,7 @@ import type {
 type StartSimulationInput = number | {
     droneCount: number;
     orderBatch?: unknown[];
+    mapId?: string;
 };
 
 function terminalToStatus(status?: string): SimulationStatus {
@@ -128,10 +129,11 @@ export function useSimulationSocket() {
     const startSimulation = useCallback((input: StartSimulationInput = 1) => {
         const droneCount = typeof input === 'number' ? input : input.droneCount;
         const orderBatch = typeof input === 'number' ? undefined : input.orderBatch;
+        const mapId = typeof input === 'number' ? 'hanoi_my_dinh_me_tri' : input.mapId ?? 'hanoi_my_dinh_me_tri';
         return sendJson({
             type: 'request_start_simulation',
             payload: {
-                mapId: 'hanoi_default',
+                mapId,
                 droneCount,
                 orderBatch,
                 autoDispatch: true,

@@ -1,4 +1,5 @@
 import argparse
+import copy
 import sys
 from pathlib import Path
 
@@ -23,15 +24,15 @@ def load_config():
         return yaml.safe_load(f)
 
 
-def source_buildings_path():
+def source_buildings_path(map_id):
     candidates = [
-        ROOT / "hanoi_buildings.geojson",
-        ROOT.parent / "fe" / "public" / "hanoi_buildings.geojson",
+        ROOT / "maps" / map_id / "buildings.geojson",
+        ROOT.parent / "fe" / "public" / "maps" / map_id / "buildings.geojson",
     ]
     for candidate in candidates:
         if candidate.exists():
             return candidate
-    raise FileNotFoundError("hanoi_buildings.geojson not found in coreUAV or fe/public")
+    raise FileNotFoundError(f"buildings.geojson not found for map_id={map_id}")
 
 
 def altitude_levels(config):
@@ -51,6 +52,21 @@ def altitude_levels(config):
     return sorted(set(clamped))
 
 
+def config_for_map(config, map_id):
+    next_config = copy.deepcopy(config)
+    map_config = next_config.setdefault("map", {})
+    preset = map_config.get("presets", {}).get(map_id)
+    if preset:
+        map_config["map_id"] = preset.get("mapId", map_id)
+        map_config["label"] = preset.get("label", map_config.get("label", map_id))
+        for key in ("start_latlng", "goal_latlng", "charging_stations_latlng", "no_fly_zones", "safe_order_points", "building_geojson_url"):
+            if key in preset:
+                map_config[key] = copy.deepcopy(preset[key])
+    else:
+        map_config["map_id"] = map_id
+    return next_config
+
+
 def nearest_node(latlng, transformer, min_x, min_y, resolution, cols, rows):
     x, y = transformer.transform(latlng[1], latlng[0])
     i = int(round((x - min_x) / resolution))
@@ -61,11 +77,11 @@ def nearest_node(latlng, transformer, min_x, min_y, resolution, cols, rows):
 
 
 def build_cache(map_id):
-    config = load_config()
+    config = config_for_map(load_config(), map_id)
     resolution = float(config.get("performance", {}).get("grid_resolution", 10.0))
     safety_margin = float(config.get("obstacle_avoidance", {}).get("safety_margin", 5.0))
     levels = altitude_levels(config)
-    buildings_path = source_buildings_path()
+    buildings_path = source_buildings_path(map_id)
 
     print("[CACHE] Loading buildings...")
     buildings = gpd.read_file(buildings_path)
@@ -126,6 +142,13 @@ def build_cache(map_id):
 
     metadata = {
         "mapId": map_id,
+        "label": config["map"].get("label", map_id),
+        "startLatLng": config["map"]["start_latlng"],
+        "goalLatLng": config["map"]["goal_latlng"],
+        "chargingStationsLatLng": config["map"].get("charging_stations_latlng", []),
+        "noFlyZones": config.get("map", {}).get("no_fly_zones", []),
+        "safeOrderPoints": config["map"].get("safe_order_points", []),
+        "buildingGeoJsonUrl": config["map"].get("building_geojson_url", f"/maps/{map_id}/buildings.geojson"),
         "resolution": resolution,
         "minX": float(min_x),
         "minY": float(min_y),
@@ -136,7 +159,7 @@ def build_cache(map_id):
         "startNode": start_node,
         "goalNode": goal_node,
         "chargingStationNodes": charging_nodes,
-        "sourceBuildings": buildings_path.name,
+        "sourceBuildings": str(buildings_path.relative_to(ROOT.parent) if buildings_path.is_relative_to(ROOT.parent) else buildings_path),
     }
 
     print("[CACHE] Saving cache...")
@@ -146,7 +169,7 @@ def build_cache(map_id):
 
 def main():
     parser = argparse.ArgumentParser(description="Build static map cache for UAV runtime.")
-    parser.add_argument("--map-id", default="hanoi_default")
+    parser.add_argument("--map-id", default="hanoi_my_dinh_me_tri")
     args = parser.parse_args()
     try:
         build_cache(args.map_id)

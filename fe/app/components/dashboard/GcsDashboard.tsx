@@ -72,11 +72,13 @@ export default function GcsDashboard() {
     const startHint = 'Cần có ít nhất một đơn hàng hợp lệ trước khi bắt đầu mô phỏng.';
 
     useEffect(() => {
-        fetch('/hanoi_buildings.geojson')
+        const buildingUrl = socket.mapConfig?.buildingGeoJsonUrl ?? '/maps/hanoi_my_dinh_me_tri/buildings.geojson';
+        setBuildings(null);
+        fetch(buildingUrl)
             .then(res => res.json())
             .then(data => setBuildings(data))
             .catch(() => addLocalEvent('warning', 'BUILDINGS_LOAD_FAILED', 'Could not load building layer.'));
-    }, [addLocalEvent]);
+    }, [addLocalEvent, socket.mapConfig?.buildingGeoJsonUrl]);
 
     const handleWeatherChange = useCallback((key: keyof WeatherState, value: number | boolean) => {
         setWeather(prev => ({ ...prev, [key]: value }));

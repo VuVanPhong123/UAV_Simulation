@@ -46,6 +46,12 @@ class DroneAgent:
     return_target_type_after_charging: str | None = None
     collision_hold_steps: int = 0
     collision_avoidance_reason: str | None = None
+    collision_state: str = "clear"
+    collision_peer_id: str | None = None
+    collision_distance_m: float | None = None
+    collision_action: str | None = None
+    temporary_avoidance_altitude: float | None = None
+    collision_avoidance_steps: int = 0
 
 
 class SimulationWorld:
@@ -64,6 +70,15 @@ class SimulationWorld:
         self.warning_distance = float(simulation_config.get("drone_warning_distance", max(self.safety_distance * 2, 25.0)))
         self.vertical_separation = float(simulation_config.get("drone_vertical_separation", 8.0))
         self.collision_hold_steps = int(simulation_config.get("drone_collision_hold_steps", 4))
+        self.collision_detection_range = float(
+            simulation_config.get(
+                "drone_collision_detection_range",
+                max(self.warning_distance, self.sensor_range),
+            )
+        )
+        self.collision_prediction_steps = max(1, int(simulation_config.get("drone_collision_prediction_steps", 3)))
+        self.collision_climb_steps = max(1, int(simulation_config.get("drone_collision_climb_steps", 10)))
+        self.collision_prefer_climb = bool(simulation_config.get("drone_collision_prefer_climb", True))
         self.wind_dir = 0.0
         self.wind_speed = 0.0
         self.ambient_temp = 25.0
@@ -952,68 +967,301 @@ class SimulationWorld:
             return second if first_loaded else first
         return max((first, second), key=lambda agent: agent.drone_id)
 
-    def _queue_proximity_warning(self, yielding_agent, other_agent, distance, message):
-        key = tuple(sorted((yielding_agent.drone_id, other_agent.drone_id)))
+    def _movement_vector(self, agent):
+        if agent.drone.pos is None:
+            return None
+        if agent.path and agent.path_index < len(agent.path) - 1:
+            next_node = self._path_node(agent.path[agent.path_index + 1])
+            if next_node in self.graph.nodes:
+                x2, y2 = self.graph.nodes[next_node]
+                dx = x2 - agent.drone.pos[0]
+                dy = y2 - agent.drone.pos[1]
+                dist = float(np.hypot(dx, dy))
+                if dist > 1e-6:
+                    return (dx / dist, dy / dist)
+        heading = float(agent.drone.heading or 0.0)
+        rad = math.radians(heading)
+        return (math.cos(rad), math.sin(rad))
+
+    def _relative_heading_deg(self, first, second):
+        first_vector = self._movement_vector(first)
+        second_vector = self._movement_vector(second)
+        if not first_vector or not second_vector:
+            return 0.0
+        dot = max(-1.0, min(1.0, first_vector[0] * second_vector[0] + first_vector[1] * second_vector[1]))
+        return float(math.degrees(math.acos(dot)))
+
+    def _estimate_closing_risk(self, first, second):
+        current_distance = self._horizontal_distance(first, second)
+        detection_range = max(self.warning_distance, self.sensor_range, self.collision_detection_range)
+        if current_distance > detection_range:
+            return False
+
+        first_vector = self._movement_vector(first)
+        second_vector = self._movement_vector(second)
+        if not first_vector or not second_vector:
+            return False
+
+        speed_factor = rain_factor(self.is_raining)["speed_factor"]
+        first_speed = max(0.0, float(first.drone.speed) * speed_factor)
+        second_speed = max(0.0, float(second.drone.speed) * speed_factor)
+        if first_speed <= 0 and second_speed <= 0:
+            return False
+
+        first_pos = np.array(first.drone.pos, dtype=float)
+        second_pos = np.array(second.drone.pos, dtype=float)
+        first_velocity = np.array(first_vector, dtype=float) * first_speed
+        second_velocity = np.array(second_vector, dtype=float) * second_speed
+
+        for step in range(1, self.collision_prediction_steps + 1):
+            horizon = self.time_step * step
+            predicted_first = first_pos + first_velocity * horizon
+            predicted_second = second_pos + second_velocity * horizon
+            predicted_distance = float(np.hypot(*(predicted_first - predicted_second)))
+            if predicted_distance < current_distance - 0.5 or predicted_distance <= self.safety_distance:
+                return True
+        return False
+
+    def _is_head_on_or_converging(self, first, second):
+        return self._relative_heading_deg(first, second) >= 135.0 or self._estimate_closing_risk(first, second)
+
+    def _is_agent_collision_candidate(self, agent):
+        return (
+            agent.drone.status == DroneStatus.FLYING.value
+            and agent.drone.pos is not None
+            and agent.drone.status not in {
+                DroneStatus.IDLE.value,
+                DroneStatus.FAILED.value,
+                DroneStatus.EMERGENCY_LANDING.value,
+            }
+        )
+
+    def _set_collision_state(self, agent, state, peer_id=None, distance=None, action=None, reason=None):
+        severity = {
+            "clear": 0,
+            "proximity_warning": 1,
+            "continue_priority": 1,
+            "vertical_separated": 2,
+            "climbing_avoidance": 3,
+            "yielding_hold": 4,
+        }
+        current = getattr(agent, "collision_state", "clear") or "clear"
+        if severity.get(state, 0) < severity.get(current, 0):
+            return
+        agent.collision_state = state
+        agent.collision_peer_id = peer_id
+        agent.collision_distance_m = float(distance) if distance is not None else None
+        agent.collision_action = action
+        if reason is not None:
+            agent.collision_avoidance_reason = reason
+
+    def _queue_collision_event(self, agent, peer_agent, distance, code, message, level=None):
+        key = tuple(sorted((agent.drone_id, peer_agent.drone_id)) + [code])
         last_step = self.proximity_cooldowns.get(key, -9999)
         if self.step_count - last_step < 25:
             return
         self.queue_event(
-            yielding_agent.drone_id,
-            EventLevel.WARNING.value,
-            EventCode.DRONE_PROXIMITY_WARNING.value,
-            message.format(other_id=other_agent.drone_id, distance=distance),
+            agent.drone_id,
+            level or EventLevel.WARNING.value,
+            code,
+            message.format(other_id=peer_agent.drone_id, distance=distance),
         )
         self.proximity_cooldowns[key] = self.step_count
 
-    def _apply_proximity_slowdown(self):
+    def _queue_proximity_warning(self, yielding_agent, other_agent, distance, message):
+        self._queue_collision_event(
+            yielding_agent,
+            other_agent,
+            distance,
+            EventCode.DRONE_PROXIMITY_WARNING.value,
+            message,
+        )
+
+    def _nearby_path_nodes(self, agent, lookahead=3):
+        nodes = [self._current_grid_node(agent)]
+        if agent.path:
+            end = min(len(agent.path), agent.path_index + 1 + lookahead)
+            for point in agent.path[agent.path_index + 1:end]:
+                node = self._path_node(point)
+                if node not in nodes:
+                    nodes.append(node)
+        return nodes
+
+    def _find_temporary_avoidance_altitude(self, agent):
+        current_altitude = float(agent.drone.altitude or 0.0)
+        max_altitude = float(self.config.get("drone", {}).get("max_altitude", current_altitude))
+        candidates = [
+            float(level)
+            for level in getattr(self.graph, "altitude_levels", [])
+            if float(level) >= current_altitude + self.vertical_separation and float(level) <= max_altitude
+        ]
+        for altitude in candidates:
+            if all(self.graph.is_node_clear_at_altitude(node, altitude) for node in self._nearby_path_nodes(agent)):
+                return altitude
+        return None
+
+    def _reset_collision_state_for_step(self):
         for agent in self.get_agents():
             agent.temp_speed_factor = 1.0
             agent.collision_avoidance_reason = None
+            if agent.collision_avoidance_steps > 0:
+                agent.collision_avoidance_steps -= 1
             if agent.collision_hold_steps > 0:
                 agent.collision_hold_steps -= 1
                 agent.temp_speed_factor = 0.0
-                agent.collision_avoidance_reason = "collision_hold"
+                self._set_collision_state(
+                    agent,
+                    "yielding_hold",
+                    agent.collision_peer_id,
+                    agent.collision_distance_m,
+                    "hold_position",
+                    "collision_hold",
+                )
+            elif agent.collision_avoidance_steps > 0 and agent.temporary_avoidance_altitude is not None:
+                agent.temp_speed_factor = min(agent.temp_speed_factor, 0.75)
+                self._set_collision_state(
+                    agent,
+                    "climbing_avoidance",
+                    agent.collision_peer_id,
+                    agent.collision_distance_m,
+                    "climb_to_avoid",
+                    agent.collision_avoidance_reason or "collision_climb",
+                )
+            else:
+                agent.collision_state = "clear"
+                agent.collision_peer_id = None
+                agent.collision_distance_m = None
+                agent.collision_action = None
+                agent.temporary_avoidance_altitude = None
+
+    def _apply_collision_avoidance(self):
+        self._reset_collision_state_for_step()
 
         active = [
             agent for agent in self.get_agents()
-            if agent.drone.status == DroneStatus.FLYING.value and agent.drone.pos is not None
+            if self._is_agent_collision_candidate(agent)
         ]
         active.sort(key=lambda item: item.drone_id)
         for idx, first in enumerate(active):
             for second in active[idx + 1:]:
                 vertical_distance = self._vertical_distance(first, second)
-                if vertical_distance >= self.vertical_separation:
+                dist = self._horizontal_distance(first, second)
+                detection_range = max(self.warning_distance, self.sensor_range, self.collision_detection_range)
+                if dist >= detection_range:
                     continue
 
-                dist = self._horizontal_distance(first, second)
-                if dist >= self.warning_distance:
+                if vertical_distance >= self.vertical_separation:
+                    self._set_collision_state(first, "vertical_separated", second.drone_id, dist, None)
+                    self._set_collision_state(second, "vertical_separated", first.drone_id, dist, None)
+                    self._queue_collision_event(
+                        first,
+                        second,
+                        dist,
+                        EventCode.DRONE_COLLISION_VERTICAL_SEPARATED.value,
+                        "Vertical separation from {other_id}: {distance:.1f}m horizontal.",
+                        EventLevel.INFO.value,
+                    )
+                    continue
+
+                is_closing = self._estimate_closing_risk(first, second)
+                is_head_on_or_converging = self._is_head_on_or_converging(first, second)
+                if dist >= self.warning_distance and not is_closing:
                     continue
 
                 yielding_agent = self._choose_yielding_agent(first, second)
                 other_agent = second if yielding_agent is first else first
+
+                if self.collision_prefer_climb and is_head_on_or_converging:
+                    avoidance_altitude = self._find_temporary_avoidance_altitude(yielding_agent)
+                    if avoidance_altitude is not None:
+                        yielding_agent.temporary_avoidance_altitude = avoidance_altitude
+                        yielding_agent.collision_avoidance_steps = max(
+                            yielding_agent.collision_avoidance_steps,
+                            self.collision_climb_steps,
+                        )
+                        yielding_agent.temp_speed_factor = min(yielding_agent.temp_speed_factor, 0.75)
+                        self._set_collision_state(
+                            yielding_agent,
+                            "climbing_avoidance",
+                            other_agent.drone_id,
+                            dist,
+                            "climb_to_avoid",
+                            f"climbing_to_avoid_{other_agent.drone_id}",
+                        )
+                        self._set_collision_state(
+                            other_agent,
+                            "continue_priority",
+                            yielding_agent.drone_id,
+                            dist,
+                            "continue_priority",
+                            f"priority_over_{yielding_agent.drone_id}",
+                        )
+                        self._queue_collision_event(
+                            yielding_agent,
+                            other_agent,
+                            dist,
+                            EventCode.DRONE_COLLISION_CLIMB.value,
+                            "Climbing to avoid collision with {other_id}: {distance:.1f}m.",
+                        )
+                        continue
+
                 if dist < self.safety_distance:
                     yielding_agent.collision_hold_steps = max(
                         yielding_agent.collision_hold_steps,
                         self.collision_hold_steps,
                     )
                     yielding_agent.temp_speed_factor = 0.0
-                    yielding_agent.collision_avoidance_reason = f"holding_to_avoid_{other_agent.drone_id}"
-                    self._queue_proximity_warning(
+                    self._set_collision_state(
+                        yielding_agent,
+                        "yielding_hold",
+                        other_agent.drone_id,
+                        dist,
+                        "hold_position",
+                        f"holding_to_avoid_{other_agent.drone_id}",
+                    )
+                    self._set_collision_state(
+                        other_agent,
+                        "continue_priority",
+                        yielding_agent.drone_id,
+                        dist,
+                        "continue_priority",
+                        f"priority_over_{yielding_agent.drone_id}",
+                    )
+                    self._queue_collision_event(
                         yielding_agent,
                         other_agent,
                         dist,
+                        EventCode.DRONE_COLLISION_HOLD.value,
                         "Holding to avoid collision with {other_id}: {distance:.1f}m.",
                     )
                     continue
 
                 yielding_agent.temp_speed_factor = min(yielding_agent.temp_speed_factor, 0.45)
-                yielding_agent.collision_avoidance_reason = f"slowing_to_avoid_{other_agent.drone_id}"
+                self._set_collision_state(
+                    yielding_agent,
+                    "proximity_warning",
+                    other_agent.drone_id,
+                    dist,
+                    "slow_down",
+                    f"slowing_to_avoid_{other_agent.drone_id}",
+                )
+                self._set_collision_state(
+                    other_agent,
+                    "continue_priority",
+                    yielding_agent.drone_id,
+                    dist,
+                    "continue_priority",
+                    f"priority_over_{yielding_agent.drone_id}",
+                )
                 self._queue_proximity_warning(
                     yielding_agent,
                     other_agent,
                     dist,
                     "Close to {other_id}: {distance:.1f}m. Slowing down to avoid collision.",
                 )
+
+    def _apply_proximity_slowdown(self):
+        self._apply_collision_avoidance()
 
     def _move_agent(self, agent, dt):
         agent.altitude_change_rate = 0.0
@@ -1022,7 +1270,10 @@ class SimulationWorld:
         if agent.path and agent.path_index < len(agent.path) - 1:
             next_point = agent.path[agent.path_index + 1]
             next_node = self._path_node(next_point)
-            target_altitude = self._path_altitude(next_point, agent.drone.altitude)
+            path_target_altitude = self._path_altitude(next_point, agent.drone.altitude)
+            target_altitude = path_target_altitude
+            if agent.temporary_avoidance_altitude is not None and agent.collision_avoidance_steps > 0:
+                target_altitude = max(target_altitude, float(agent.temporary_avoidance_altitude))
             agent.current_target_altitude = target_altitude
             x2, y2 = self.graph.nodes[next_node]
 

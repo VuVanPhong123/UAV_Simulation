@@ -38,9 +38,17 @@ export type DroneTelemetry = {
     currentMissionId?: string | null;
     currentTargetType?: string | null;
     payloadKg?: number;
+    collisionState?: string;
+    collisionPeerId?: string | null;
+    collisionDistanceM?: number | null;
+    collisionAction?: string | null;
+    collisionAvoidanceReason?: string | null;
 };
 
 export type MapConfig = {
+    mapId?: string;
+    mapLabel?: string;
+    buildingGeoJsonUrl?: string;
     start: LatLng;
     goal: LatLng;
     depot?: LatLng;
@@ -48,6 +56,7 @@ export type MapConfig = {
     hasFixedGoal?: boolean;
     charging_stations?: LatLng[];
     no_fly_zones?: { center: LatLng; radius: number }[];
+    safeOrderPoints?: LatLng[];
     droneCount?: number;
     drones?: { droneId: string; start: LatLng; goal: LatLng }[];
 };

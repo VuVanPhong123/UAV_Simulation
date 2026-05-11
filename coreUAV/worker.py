@@ -1,3 +1,4 @@
+import copy
 import json
 import time
 
@@ -8,12 +9,14 @@ from websocket import create_connection
 
 from energy_model import rain_factor
 from graph_map import path_point_altitude, path_point_node
+from map_cache import MapCacheError, cache_exists
 from simulation_world import SimulationWorld
 from statuses import DroneStatus, EventCode, EventLevel
 
 WS_URL = "ws://localhost:8080"
 SYSTEM_DRONE_ID = "system"
 DEFAULT_TELEMETRY_EVERY_N_STEPS = 5
+DEFAULT_MAP_ID = "hanoi_my_dinh_me_tri"
 
 
 def now_ms():
@@ -28,6 +31,25 @@ def parse_bool(value):
     return bool(value)
 
 
+def config_for_map(base_config, requested_map_id=None):
+    next_config = copy.deepcopy(base_config)
+    map_config = next_config.setdefault("map", {})
+    presets = map_config.get("presets", {})
+    map_id = requested_map_id or map_config.get("map_id") or DEFAULT_MAP_ID
+    if map_id not in presets:
+        map_id = DEFAULT_MAP_ID
+    preset = presets.get(map_id)
+    if preset:
+        map_config["map_id"] = preset.get("mapId", map_id)
+        map_config["label"] = preset.get("label", map_config.get("label", map_id))
+        for key in ("start_latlng", "goal_latlng", "charging_stations_latlng", "no_fly_zones", "safe_order_points", "building_geojson_url"):
+            if key in preset:
+                map_config[key] = copy.deepcopy(preset[key])
+    else:
+        map_config["map_id"] = map_id
+    return next_config
+
+
 def main():
     print("Dang ket noi toi Simulation Broker...")
     ws = create_connection(WS_URL)
@@ -38,8 +60,9 @@ def main():
     }))
     print("Da ket noi va gui register worker!")
 
-    with open("config.yaml", "r") as f:
+    with open("config.yaml", "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
+    base_config = copy.deepcopy(config)
     performance_config = config.get("performance", {})
     telemetry_every_n_steps = max(
         1,
@@ -101,6 +124,9 @@ def main():
             for agent in world.get_agents()
         ]
         payload = {
+            "mapId": config["map"].get("map_id", DEFAULT_MAP_ID),
+            "mapLabel": config["map"].get("label", config["map"].get("map_id", DEFAULT_MAP_ID)),
+            "buildingGeoJsonUrl": config["map"].get("building_geojson_url", f"/maps/{config['map'].get('map_id', DEFAULT_MAP_ID)}/buildings.geojson"),
             "droneCount": len(drones),
             "drones": drones,
             "depot": config["map"]["start_latlng"],
@@ -109,7 +135,8 @@ def main():
             "start": config["map"]["start_latlng"],
             "goal": config["map"]["goal_latlng"],
             "charging_stations": config["map"].get("charging_stations_latlng", []),
-            "no_fly_zones": config["map"].get("no_fly_zones", [])
+            "no_fly_zones": config["map"].get("no_fly_zones", []),
+            "safeOrderPoints": config["map"].get("safe_order_points", [])
         }
         ws.send(json.dumps({
             "type": "config",
@@ -145,6 +172,11 @@ def main():
             "currentMissionId": agent.current_mission_id,
             "currentTargetType": agent.current_target_type,
             "payloadKg": float(agent.drone.payload_weight),
+            "collisionState": agent.collision_state or "clear",
+            "collisionPeerId": agent.collision_peer_id,
+            "collisionDistanceM": agent.collision_distance_m,
+            "collisionAction": agent.collision_action,
+            "collisionAvoidanceReason": agent.collision_avoidance_reason,
             "step": step,
             "terminated": terminated
         }
@@ -178,6 +210,11 @@ def main():
             "currentMissionId": payload["currentMissionId"],
             "currentTargetType": payload["currentTargetType"],
             "payloadKg": payload["payloadKg"],
+            "collisionState": payload["collisionState"],
+            "collisionPeerId": payload["collisionPeerId"],
+            "collisionDistanceM": payload["collisionDistanceM"],
+            "collisionAction": payload["collisionAction"],
+            "collisionAvoidanceReason": payload["collisionAvoidanceReason"],
             "terminated": payload["terminated"]
         }))
 
@@ -378,11 +415,28 @@ def main():
                 payload = data.get("payload") or {}
                 sim_id = data.get("simId")
                 frontend_id = data.get("frontendId")
+                requested_map_id = payload.get("mapId") or payload.get("map_id")
                 drone_count = max(1, min(5, int(payload.get("droneCount", 1) or 1)))
                 is_assigned = True
                 is_running = False
                 step = 0
                 telemetry_counter = 0
+
+                config = config_for_map(base_config, requested_map_id)
+                dt = config["simulation"]["time_step"]
+                map_id = config.get("map", {}).get("map_id", DEFAULT_MAP_ID)
+                if config.get("performance", {}).get("require_map_cache", False) and not cache_exists(map_id):
+                    send_event(
+                        EventLevel.ERROR.value,
+                        EventCode.MAP_CACHE_MISSING.value,
+                        f"Map cache missing for mapId={map_id}. Build cache before demo.",
+                        SYSTEM_DRONE_ID,
+                    )
+                    send_worker_status("idle")
+                    is_assigned = False
+                    sim_id = None
+                    frontend_id = None
+                    continue
 
                 world = SimulationWorld(config, drone_count, idle_on_start=True)
                 transformer = Transformer.from_crs(world.graph.crs_utm, "epsg:4326", always_xy=True)
