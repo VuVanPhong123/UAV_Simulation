@@ -71,7 +71,7 @@ export default function BottomEventPanel({
                     />
                     <button
                         onClick={() => setCollapsed(prev => !prev)}
-                        className="rounded border border-slate-200 bg-white px-2 py-1 text-xs font-bold text-slate-600 hover:bg-slate-50"
+                        className="cursor-pointer rounded border border-slate-200 bg-white px-2 py-1 text-xs font-bold text-slate-600 hover:bg-slate-50"
                     >
                         {collapsed ? 'Mở rộng' : 'Thu gọn'}
                     </button>

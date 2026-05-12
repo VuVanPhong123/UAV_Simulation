@@ -26,7 +26,7 @@ export default function LeftNavigation({ activeSection, onChange }: LeftNavigati
                         key={item.key}
                         data-testid={item.key === 'environment' ? 'nav-environment' : item.key === 'map_tools' ? 'nav-map-tools' : undefined}
                         onClick={() => onChange(item.key)}
-                        className={`rounded border px-1 py-2 text-center transition-colors ${
+                        className={`cursor-pointer rounded border px-1 py-2 text-center transition-colors ${
                             active
                                 ? 'border-blue-200 bg-blue-50 text-blue-700'
                                 : 'border-slate-100 bg-slate-50 text-slate-600 hover:bg-slate-100'

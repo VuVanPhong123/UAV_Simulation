@@ -53,7 +53,7 @@ export default function OrderManagementPanel({
                 <h2 className="border-b border-slate-100 pb-2 text-xs font-bold uppercase text-slate-500">Quản lý đơn hàng</h2>
                 <button
                     onClick={onOpenOrderModal}
-                    className="mt-3 w-full rounded bg-blue-600 px-3 py-2 text-xs font-bold text-white hover:bg-blue-700"
+                    className="mt-3 w-full cursor-pointer rounded bg-blue-600 px-3 py-2 text-xs font-bold text-white hover:bg-blue-700"
                 >
                     Mở quản lý đơn hàng
                 </button>
@@ -76,7 +76,7 @@ export default function OrderManagementPanel({
                             <button
                                 key={orderId}
                                 onClick={() => onSelectOrder(orderId)}
-                                className={`w-full rounded border p-2 text-left text-xs transition-colors ${
+                                className={`w-full cursor-pointer rounded border p-2 text-left text-xs transition-colors ${
                                     selected ? 'border-blue-300 bg-blue-50' : 'border-slate-200 bg-slate-50 hover:bg-slate-100'
                                 }`}
                             >

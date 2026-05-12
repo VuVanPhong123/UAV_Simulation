@@ -14,6 +14,7 @@ import {
     DEFAULT_DEMO_DRONE_COUNT,
     MAX_DEMO_DRONE_COUNT,
     type ActiveDashboardSection,
+    type AsyncRequestStatus,
     type DraftOrder,
     type DynamicNoFlyZone,
     type DynamicObstacle,
@@ -31,6 +32,10 @@ type NoFlyZoneConfig = {
     radius: number;
     height: number;
 };
+
+type BuildingLoadStatus = 'idle' | 'loading' | 'success' | 'error';
+
+const SUCCESS_CLEAR_MS = 2800;
 
 function createDraftOrder(): DraftOrder {
     return {
@@ -58,6 +63,10 @@ export default function GcsDashboard() {
     const [dynamicObstacles, setDynamicObstacles] = useState<DynamicObstacle[]>([]);
     const [dynamicNoFlyZones, setDynamicNoFlyZones] = useState<DynamicNoFlyZone[]>([]);
     const [layers, setLayers] = useState<LayerToggles>(DEFAULT_LAYER_TOGGLES);
+    const [buildingLoadStatus, setBuildingLoadStatus] = useState<BuildingLoadStatus>('idle');
+    const [weatherApplyStatus, setWeatherApplyStatus] = useState<AsyncRequestStatus>('idle');
+    const [weatherApplyMessage, setWeatherApplyMessage] = useState<string | null>(null);
+    const [commandFeedback, setCommandFeedback] = useState<{ tone: AsyncRequestStatus; message: string } | null>(null);
     const [droneCount, setDroneCount] = useState(DEFAULT_DEMO_DRONE_COUNT);
     const [activeSection, setActiveSection] = useState<ActiveDashboardSection>('overview');
     const [draftOrder, setDraftOrder] = useState<DraftOrder>(createDraftOrder);
@@ -78,14 +87,49 @@ export default function GcsDashboard() {
     const canStartWithOrders = droneCount >= 1 && droneCount <= MAX_DEMO_DRONE_COUNT && draftOrders.length > 0 && validDraftOrders.length === draftOrders.length;
     const startHint = 'Cần có ít nhất một đơn hàng hợp lệ trước khi bắt đầu mô phỏng.';
 
+    const orderStartHint = startHint;
+    const effectiveStartHint = socket.serverStatus !== 'connected'
+        ? 'Chưa kết nối máy chủ.'
+        : socket.workerStatus === 'disconnected' || socket.workerStatus === 'unknown'
+            ? 'Chưa có worker kết nối.'
+            : socket.workerStatus === 'busy'
+                ? 'Worker đang bận, vui lòng dừng mô phỏng khác hoặc chờ worker rảnh.'
+                : socket.workerStatus !== 'idle'
+                    ? 'Worker chưa sẵn sàng.'
+                    : socket.simulationStatus === 'running'
+                        ? 'Mô phỏng đang chạy.'
+                        : !canStartWithOrders
+                            ? orderStartHint
+                            : '';
+
     useEffect(() => {
         const buildingUrl = socket.mapConfig?.buildingGeoJsonUrl ?? '/maps/hanoi_my_dinh_me_tri/buildings.geojson';
+        let cancelled = false;
         setBuildings(null);
+        setBuildingLoadStatus('loading');
         fetch(buildingUrl)
             .then(res => res.json())
-            .then(data => setBuildings(data))
-            .catch(() => addLocalEvent('warning', 'BUILDINGS_LOAD_FAILED', 'Could not load building layer.'));
+            .then(data => {
+                if (cancelled) return;
+                setBuildings(data);
+                setBuildingLoadStatus('success');
+            })
+            .catch(() => {
+                if (cancelled) return;
+                setBuildingLoadStatus('error');
+                addLocalEvent('warning', 'BUILDINGS_LOAD_FAILED', 'Không tải được lớp tòa nhà. Bản đồ vẫn chạy nhưng thiếu layer tòa nhà.');
+            });
+        return () => {
+            cancelled = true;
+        };
     }, [addLocalEvent, socket.mapConfig?.buildingGeoJsonUrl]);
+
+    const setTemporaryFeedback = useCallback((tone: AsyncRequestStatus, message: string) => {
+        setCommandFeedback({ tone, message });
+        if (tone === 'success' || tone === 'warning' || tone === 'error') {
+            window.setTimeout(() => setCommandFeedback(null), SUCCESS_CLEAR_MS);
+        }
+    }, []);
 
     const handleWeatherChange = useCallback((key: keyof WeatherState, value: number | boolean) => {
         setWeather(prev => ({ ...prev, [key]: value }));
@@ -104,11 +148,15 @@ export default function GcsDashboard() {
         setLayers(prev => {
             const enabled = !prev[key];
             if (key === 'windShadow' && enabled) {
-                socket.requestWindShadow();
+                const sent = socket.requestWindShadow();
+                if (!sent) {
+                    setTemporaryFeedback('warning', 'Cần bắt đầu mô phỏng trước khi tải vùng cản gió.');
+                    return prev;
+                }
             }
             return { ...prev, [key]: enabled };
         });
-    }, [socket]);
+    }, [setTemporaryFeedback, socket]);
 
     const handleMapClick = useCallback((latlng: LatLng) => {
         if (mapInteractionMode === 'select_pickup') {
@@ -136,6 +184,7 @@ export default function GcsDashboard() {
             };
             if (socket.addObstacle(obstacle)) {
                 setDynamicObstacles(prev => [...prev, obstacle]);
+                setTemporaryFeedback('success', 'Đã tạo vật cản trên bản đồ.');
                 addLocalEvent('info', 'OBSTACLE_PLACED', 'Đã tạo vật cản trên bản đồ.');
             }
             setMapInteractionMode('none');
@@ -154,13 +203,14 @@ export default function GcsDashboard() {
             };
             if (socket.addNoFlyZone(zone)) {
                 setDynamicNoFlyZones(prev => [...prev, zone]);
+                setTemporaryFeedback('success', 'Đã tạo vùng cấm bay.');
                 addLocalEvent('info', 'NO_FLY_ZONE_PLACED', 'Đã tạo vùng cấm bay.');
             }
             setMapInteractionMode('none');
             return;
         }
         setMapInteractionMode('none');
-    }, [addLocalEvent, mapInteractionMode, noFlyZoneConfig, obstacleConfig, socket]);
+    }, [addLocalEvent, mapInteractionMode, noFlyZoneConfig, obstacleConfig, setTemporaryFeedback, socket]);
 
     const handleDraftChange = useCallback(<K extends keyof DraftOrder,>(key: K, value: DraftOrder[K]) => {
         setDraftOrder(prev => ({ ...prev, [key]: value }));
@@ -209,9 +259,10 @@ export default function GcsDashboard() {
         }
         setDroneCount(normalizedDroneCount);
         setDraftOrders([]);
+        setTemporaryFeedback('success', 'Đã gửi yêu cầu bắt đầu mô phỏng.');
         addLocalEvent('info', 'ORDER_FIRST_START_REQUESTED', `Bắt đầu mô phỏng với ${validDraftOrders.length} đơn hàng.`);
         return true;
-    }, [addLocalEvent, canStartWithOrders, droneCount, socket, startHint, validDraftOrders]);
+    }, [addLocalEvent, canStartWithOrders, droneCount, setTemporaryFeedback, socket, startHint, validDraftOrders]);
 
     const handleDroneCountChange = useCallback((value: number) => {
         setDroneCount(clampDroneCount(value));
@@ -294,26 +345,58 @@ export default function GcsDashboard() {
     }, [socket]);
 
     const handleReset = useCallback(() => {
-        socket.resetSimulation();
-        telemetryHistory.resetHistory();
-        setDynamicObstacles([]);
-        setDynamicNoFlyZones([]);
-        setSelectedOrderId(null);
-        setSelectedMissionId(null);
-        setEventFilter('all');
-        setMapInteractionMode('none');
-    }, [socket, telemetryHistory]);
+        if (socket.resetSimulation()) {
+            telemetryHistory.resetHistory();
+            setDynamicObstacles([]);
+            setDynamicNoFlyZones([]);
+            setSelectedOrderId(null);
+            setSelectedMissionId(null);
+            setEventFilter('all');
+            setMapInteractionMode('none');
+            setTemporaryFeedback('success', 'Đã gửi lệnh đặt lại mô phỏng.');
+            return;
+        }
+        setTemporaryFeedback('warning', 'Không có mô phỏng đang chạy để đặt lại.');
+    }, [setTemporaryFeedback, socket, telemetryHistory]);
 
     const handleStop = useCallback(() => {
-        socket.stopSimulation();
-        telemetryHistory.resetHistory();
-        setDynamicObstacles([]);
-        setDynamicNoFlyZones([]);
-        setSelectedOrderId(null);
-        setSelectedMissionId(null);
-        setEventFilter('all');
-        setMapInteractionMode('none');
-    }, [socket, telemetryHistory]);
+        if (socket.stopSimulation()) {
+            telemetryHistory.resetHistory();
+            setDynamicObstacles([]);
+            setDynamicNoFlyZones([]);
+            setSelectedOrderId(null);
+            setSelectedMissionId(null);
+            setEventFilter('all');
+            setMapInteractionMode('none');
+            setTemporaryFeedback('success', 'Đã gửi lệnh dừng mô phỏng.');
+            return;
+        }
+        setTemporaryFeedback('warning', 'Không có mô phỏng đang chạy để dừng.');
+    }, [setTemporaryFeedback, socket, telemetryHistory]);
+
+    const handleApplyWeather = useCallback(() => {
+        if (!socket.activeSimId) {
+            setWeatherApplyStatus('warning');
+            setWeatherApplyMessage('Cần bắt đầu mô phỏng trước khi áp dụng môi trường.');
+            return;
+        }
+        setWeatherApplyStatus('loading');
+        setWeatherApplyMessage('Đang áp dụng môi trường...');
+        const sent = socket.applyWeather(weather);
+        if (!sent) {
+            setWeatherApplyStatus('error');
+            setWeatherApplyMessage('Không áp dụng được môi trường. Kiểm tra kết nối/worker.');
+            return;
+        }
+        window.setTimeout(() => {
+            setWeatherApplyStatus('success');
+            setWeatherApplyMessage('Đã áp dụng môi trường.');
+            window.setTimeout(() => {
+                setWeatherApplyStatus('idle');
+                setWeatherApplyMessage(null);
+            }, SUCCESS_CLEAR_MS);
+        }, 600);
+    }, [socket, weather]);
 
     return (
         <div className="flex h-screen flex-col bg-slate-100 font-sans text-slate-800">
@@ -371,6 +454,7 @@ export default function GcsDashboard() {
                             dynamicNoFlyZones={dynamicNoFlyZones}
                             windShadowZones={socket.windShadowZones}
                             layers={layers}
+                            buildingLoadStatus={buildingLoadStatus}
                             windDir={weather.wind_dir}
                             windSpeed={weather.wind_speed}
                             mapInteractionMode={mapInteractionMode}
@@ -422,8 +506,16 @@ export default function GcsDashboard() {
                     eventFilter={eventFilter}
                     mapInteractionMode={mapInteractionMode}
                     importError={importError}
+                    isStartingSimulation={socket.isStartingSimulation}
+                    isAwaitingConfig={socket.isAwaitingConfig}
+                    isAwaitingFirstTelemetry={socket.isAwaitingFirstTelemetry}
+                    windShadowRequestStatus={socket.windShadowRequestStatus}
+                    buildingLoadStatus={buildingLoadStatus}
+                    weatherApplyStatus={weatherApplyStatus}
+                    weatherApplyMessage={weatherApplyMessage}
+                    commandFeedback={commandFeedback}
                     canStartWithOrders={canStartWithOrders}
-                    startHint={startHint}
+                    startHint={effectiveStartHint}
                     onStart={handleStartWithDraftOrders}
                     onDroneCountChange={handleDroneCountChange}
                     onSelectDrone={handleSelectDrone}
@@ -432,7 +524,7 @@ export default function GcsDashboard() {
                     onStop={handleStop}
                     onReset={handleReset}
                     onWeatherChange={handleWeatherChange}
-                    onApplyWeather={() => socket.applyWeather(weather)}
+                    onApplyWeather={handleApplyWeather}
                     onObstacleChange={handleObstacleChange}
                     onNoFlyZoneChange={handleNoFlyZoneChange}
                     onLayerToggle={handleLayerToggle}

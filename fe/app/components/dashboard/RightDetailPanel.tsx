@@ -24,8 +24,10 @@ import {
     translateMissionStatus,
     translateOrderStatus
 } from '../utils/labels';
+import { ActionStatusMessage } from '../ui/ActionStatus';
 import type {
     ActiveDashboardSection,
+    AsyncRequestStatus,
     DeliveryOrder,
     DraftOrder,
     DroneTelemetry,
@@ -82,6 +84,14 @@ type RightDetailPanelProps = {
     eventFilter: EventFilter;
     mapInteractionMode: MapInteractionMode;
     importError: string | null;
+    isStartingSimulation: boolean;
+    isAwaitingConfig: boolean;
+    isAwaitingFirstTelemetry: boolean;
+    windShadowRequestStatus: AsyncRequestStatus;
+    buildingLoadStatus: 'idle' | 'loading' | 'success' | 'error';
+    weatherApplyStatus: AsyncRequestStatus;
+    weatherApplyMessage: string | null;
+    commandFeedback: { tone: AsyncRequestStatus; message: string } | null;
     onStart: () => void;
     onDroneCountChange: (value: number) => void;
     onSelectDrone: (droneId: string) => void;
@@ -257,7 +267,7 @@ export default function RightDetailPanel(props: RightDetailPanelProps) {
                         title="Mở bảng điều khiển"
                         aria-label="Mở bảng điều khiển"
                         onClick={props.onToggleCollapsed}
-                        className="w-full rounded border border-slate-300 bg-white px-2 py-2 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-100"
+                        className="w-full cursor-pointer rounded border border-slate-300 bg-white px-2 py-2 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-100"
                     >
                         Mở
                     </button>
@@ -271,6 +281,7 @@ export default function RightDetailPanel(props: RightDetailPanelProps) {
                     mapConfig={props.mapConfig}
                     mapInteractionMode={props.mapInteractionMode}
                     importError={props.importError}
+                    isStartingSimulation={props.isStartingSimulation}
                     canStartWithOrders={props.canStartWithOrders && props.serverStatus === 'connected' && props.workerStatus === 'idle' && props.simulationStatus !== 'running'}
                     startHint={props.startHint}
                     onDraftChange={props.onDraftChange}
@@ -295,11 +306,16 @@ export default function RightDetailPanel(props: RightDetailPanelProps) {
                         type="button"
                         data-testid="collapse-right-panel"
                         onClick={props.onToggleCollapsed}
-                        className="w-full rounded border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-100"
+                        className="w-full cursor-pointer rounded border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-100"
                     >
                         Thu gọn
                     </button>
                 </div>
+                {props.commandFeedback && (
+                    <ActionStatusMessage tone={props.commandFeedback.tone === 'idle' ? 'info' : props.commandFeedback.tone}>
+                        {props.commandFeedback.message}
+                    </ActionStatusMessage>
+                )}
                 {props.activeSection === 'overview' && (
                     <>
                         <ConnectionPanel {...props} />
@@ -389,6 +405,8 @@ export default function RightDetailPanel(props: RightDetailPanelProps) {
                             onChange={props.onWeatherChange}
                             onApply={props.onApplyWeather}
                             disabled={!props.activeSimId}
+                            status={props.weatherApplyStatus}
+                            statusMessage={props.weatherApplyMessage}
                         />
                         <ObstaclePanel
                             obstacleConfig={props.obstacleConfig}
@@ -409,7 +427,13 @@ export default function RightDetailPanel(props: RightDetailPanelProps) {
                 )}
 
                 {props.activeSection === 'map_tools' && (
-                    <LayerTogglePanel layers={props.layers} onToggle={props.onLayerToggle} />
+                    <LayerTogglePanel
+                        layers={props.layers}
+                        activeSimId={props.activeSimId}
+                        windShadowStatus={props.windShadowRequestStatus}
+                        buildingLoadStatus={props.buildingLoadStatus}
+                        onToggle={props.onLayerToggle}
+                    />
                 )}
 
                 {props.activeSection === 'events' && (
@@ -441,6 +465,7 @@ export default function RightDetailPanel(props: RightDetailPanelProps) {
             mapConfig={props.mapConfig}
             mapInteractionMode={props.mapInteractionMode}
             importError={props.importError}
+            isStartingSimulation={props.isStartingSimulation}
             canStartWithOrders={props.canStartWithOrders && props.serverStatus === 'connected' && props.workerStatus === 'idle' && props.simulationStatus !== 'running'}
             startHint={props.startHint}
             onDraftChange={props.onDraftChange}

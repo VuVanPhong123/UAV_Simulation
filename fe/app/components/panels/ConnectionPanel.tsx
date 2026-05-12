@@ -10,6 +10,8 @@ type ConnectionPanelProps = {
     activeSimId?: string | null;
     frontendId?: string | null;
     latencyMs?: number | null;
+    isAwaitingConfig?: boolean;
+    isAwaitingFirstTelemetry?: boolean;
 };
 
 export default function ConnectionPanel(props: ConnectionPanelProps) {
@@ -29,6 +31,20 @@ export default function ConnectionPanel(props: ConnectionPanelProps) {
                         <span className="truncate text-right">{value}</span>
                     </div>
                 ))}
+            </div>
+            <div className="mt-3 space-y-2">
+                {(props.workerStatus === 'disconnected' || props.workerStatus === 'unknown') && (
+                    <p className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">Chưa có worker kết nối.</p>
+                )}
+                {props.workerStatus === 'busy' && (
+                    <p className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">Worker đang bận, vui lòng dừng mô phỏng khác hoặc chờ worker rảnh.</p>
+                )}
+                {props.isAwaitingConfig && (
+                    <p className="rounded border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700">Đang tải cấu hình bản đồ/mô phỏng...</p>
+                )}
+                {props.isAwaitingFirstTelemetry && (
+                    <p className="rounded border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700">Đang chờ telemetry đầu tiên...</p>
+                )}
             </div>
         </section>
     );

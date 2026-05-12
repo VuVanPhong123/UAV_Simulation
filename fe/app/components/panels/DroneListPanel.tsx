@@ -24,7 +24,7 @@ export default function DroneListPanel({ drones, selectedDroneId, onSelect }: Dr
                         <button
                             key={droneId}
                             onClick={() => onSelect(droneId)}
-                            className={`w-full rounded border px-2 py-2 text-left transition-colors ${
+                            className={`w-full cursor-pointer rounded border px-2 py-2 text-left transition-colors ${
                                 selected
                                     ? 'border-blue-300 bg-blue-50'
                                     : 'border-slate-200 bg-slate-50 hover:bg-slate-100'

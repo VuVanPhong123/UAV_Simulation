@@ -34,7 +34,7 @@ export default function EventFilterBar({
                     key={filter}
                     disabled={disabledByFilter[filter]}
                     onClick={() => onChange(filter)}
-                    className={`rounded border px-2 py-1 text-[11px] font-bold transition-colors ${
+                    className={`cursor-pointer rounded border px-2 py-1 text-[11px] font-bold transition-colors ${
                         value === filter
                             ? 'border-blue-300 bg-blue-50 text-blue-700'
                             : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'

@@ -54,6 +54,7 @@ type UavMapProps = {
     dynamicNoFlyZones: DynamicNoFlyZone[];
     windShadowZones: LatLng[];
     layers: LayerToggles;
+    buildingLoadStatus?: 'idle' | 'loading' | 'success' | 'error';
     windDir: number;
     windSpeed: number;
     mapInteractionMode: MapInteractionMode;
@@ -86,6 +87,7 @@ export default function UavMap({
     dynamicNoFlyZones,
     windShadowZones,
     layers,
+    buildingLoadStatus = 'idle',
     windDir,
     windSpeed,
     mapInteractionMode,
@@ -153,8 +155,18 @@ export default function UavMap({
         <div className="relative h-full min-h-0 w-full min-w-0 overflow-hidden bg-slate-100">
             {layers.weatherOverlay && <WindOverlay windDir={windDir} windSpeed={windSpeed} />}
             {displayInteractionText && (
-                <div className="absolute left-4 top-4 z-[500] rounded border border-blue-200 bg-white px-3 py-2 text-xs font-bold text-blue-700 shadow-sm">
+                <div className="pointer-events-none absolute left-4 top-4 z-[500] rounded border border-blue-200 bg-white px-3 py-2 text-xs font-bold text-blue-700 shadow-sm">
                     {displayInteractionText}
+                </div>
+            )}
+            {buildingLoadStatus === 'loading' && layers.buildings && (
+                <div className="pointer-events-none absolute right-4 top-4 z-[500] rounded border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 shadow-sm">
+                    Đang tải lớp tòa nhà...
+                </div>
+            )}
+            {buildingLoadStatus === 'error' && layers.buildings && (
+                <div className="pointer-events-none absolute right-4 top-4 z-[500] max-w-xs rounded border border-red-200 bg-white px-3 py-2 text-xs font-bold text-red-700 shadow-sm">
+                    Không tải được lớp tòa nhà.
                 </div>
             )}
             <MapContainer

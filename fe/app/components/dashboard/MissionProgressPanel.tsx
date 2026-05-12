@@ -157,7 +157,7 @@ export default function MissionProgressPanel({
                 <button
                     disabled={!droneId || !onSelectDrone}
                     onClick={() => droneId && onSelectDrone?.(droneId)}
-                    className="truncate text-right font-mono text-blue-700 disabled:text-slate-700"
+                    className="cursor-pointer truncate text-right font-mono text-blue-700 disabled:cursor-not-allowed disabled:text-slate-700"
                 >
                     {value(droneId)}
                 </button>
@@ -165,7 +165,7 @@ export default function MissionProgressPanel({
                 <button
                     disabled={!orderId || !onSelectOrder}
                     onClick={() => orderId && onSelectOrder?.(orderId)}
-                    className="truncate text-right font-mono text-blue-700 disabled:text-slate-700"
+                    className="cursor-pointer truncate text-right font-mono text-blue-700 disabled:cursor-not-allowed disabled:text-slate-700"
                 >
                     {value(orderId)}
                 </button>

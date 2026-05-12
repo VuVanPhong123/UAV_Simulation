@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import type { ReactNode } from 'react';
+import { ActionStatusMessage, type ActionStatusTone } from '../ui/ActionStatus';
 import {
     formatLatLng,
     translatePriority
@@ -23,6 +24,7 @@ type OrderManagementModalProps = {
     mapConfig: MapConfig | null;
     mapInteractionMode: MapInteractionMode;
     importError: string | null;
+    isStartingSimulation?: boolean;
     canStartWithOrders: boolean;
     startHint: string;
     onDraftChange: <K extends keyof DraftOrder>(key: K, value: DraftOrder[K]) => void;
@@ -198,6 +200,7 @@ export default function OrderManagementModal({
     mapConfig,
     mapInteractionMode,
     importError,
+    isStartingSimulation = false,
     canStartWithOrders,
     startHint,
     onDraftChange,
@@ -212,9 +215,11 @@ export default function OrderManagementModal({
     const [jsonText, setJsonText] = useState('');
     const [randomCount, setRandomCount] = useState(5);
     const [randomHint, setRandomHint] = useState<string | null>(null);
+    const [actionFeedback, setActionFeedback] = useState<{ tone: ActionStatusTone; message: string } | null>(null);
+    const [isSubmitting, setIsSubmitting] = useState(false);
     const canAddDraft = draftOrderValid(draftOrder);
     const allDraftsValid = draftOrders.length > 0 && draftOrders.every(draftOrderValid);
-    const submitDisabled = activeSimId ? !allDraftsValid : !canStartWithOrders;
+    const submitDisabled = activeSimId ? !allDraftsValid || isSubmitting : !canStartWithOrders || isSubmitting || isStartingSimulation;
     const actionHint = activeSimId
         ? 'Cần có ít nhất một đơn nháp hợp lệ để gửi thêm đơn hàng.'
         : startHint;
@@ -226,8 +231,22 @@ export default function OrderManagementModal({
 
     if (!open) return null;
 
+    const setSuccessFeedback = (message: string) => {
+        setActionFeedback({ tone: 'success', message });
+        window.setTimeout(() => setActionFeedback(null), 2800);
+    };
+
+    const importedRowCount = () => {
+        try {
+            const parsed = JSON.parse(jsonText);
+            return Array.isArray(parsed) ? parsed.length : 1;
+        } catch {
+            return 0;
+        }
+    };
+
     return (
-        <div data-testid="order-modal" className="fixed inset-0 z-[1000] flex items-center justify-center bg-slate-900/40 p-4">
+        <div data-testid="order-modal" className="fixed inset-0 z-[1000] flex items-center justify-center bg-slate-900/40 p-4 [&_button]:cursor-pointer [&_button:disabled]:cursor-not-allowed">
             <div className="flex max-h-[92vh] w-full max-w-5xl flex-col rounded border border-slate-200 bg-slate-50 shadow-xl">
                 <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-3">
                     <div>
@@ -236,6 +255,11 @@ export default function OrderManagementModal({
                             Đơn nháp: {draftOrders.length} · {activeSimId ? 'Mô phỏng đang chạy' : 'Chưa bắt đầu mô phỏng'}
                         </p>
                     </div>
+                    {actionFeedback && (
+                        <div className="min-w-0 flex-1">
+                            <ActionStatusMessage tone={actionFeedback.tone}>{actionFeedback.message}</ActionStatusMessage>
+                        </div>
+                    )}
                     <button
                         data-testid="close-order-modal"
                         onClick={onClose}
@@ -326,7 +350,10 @@ export default function OrderManagementModal({
                                 </div>
                                 <button
                                     disabled={!canAddDraft}
-                                    onClick={onAddDraftOrder}
+                                    onClick={() => {
+                                        onAddDraftOrder();
+                                        setSuccessFeedback('Đã thêm đơn vào danh sách nháp.');
+                                    }}
                                     className="w-full rounded bg-slate-800 px-3 py-2 text-xs font-bold text-white hover:bg-slate-700 disabled:bg-slate-300 disabled:text-slate-500"
                                 >
                                     Thêm vào danh sách nháp
@@ -349,6 +376,7 @@ export default function OrderManagementModal({
                                         onClick={() => {
                                             const orders = createRandomOrders(randomCount, mapConfig);
                                             onAddDraftOrders(orders);
+                                            setSuccessFeedback(`Đã tạo ${orders.length} đơn ngẫu nhiên.`);
                                             setRandomHint(`Đã tạo ${orders.length} đơn ngẫu nhiên từ các điểm demo hợp lệ.`);
                                         }}
                                         className="w-full rounded bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700"
@@ -369,7 +397,15 @@ export default function OrderManagementModal({
                                 />
                                 {importError && <p className="mt-2 text-xs font-semibold text-red-600">{importError}</p>}
                                 <button
-                                    onClick={() => onImportJson(jsonText)}
+                                    onClick={() => {
+                                        const count = importedRowCount();
+                                        const imported = onImportJson(jsonText);
+                                        if (imported) {
+                                            setSuccessFeedback(`Đã nạp ${count} đơn vào danh sách nháp.`);
+                                            return;
+                                        }
+                                        setActionFeedback({ tone: 'error', message: 'Không nạp được JSON đơn hàng.' });
+                                    }}
                                     className="mt-2 w-full rounded border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100"
                                 >
                                     Nạp JSON vào danh sách nháp
@@ -410,8 +446,28 @@ export default function OrderManagementModal({
                         disabled={submitDisabled}
                         onClick={() => {
                             if (submitDisabled) return;
+                            setIsSubmitting(true);
+                            setActionFeedback({
+                                tone: 'loading',
+                                message: activeSimId ? 'Đang gửi đơn hàng...' : 'Đang gửi yêu cầu bắt đầu mô phỏng...'
+                            });
                             const sent = activeSimId ? onSubmitDraftOrders() : onStartWithDraftOrders();
-                            if (sent) onClose();
+                            if (sent) {
+                                setActionFeedback({
+                                    tone: 'success',
+                                    message: activeSimId ? 'Đã gửi danh sách đơn hàng.' : 'Đã gửi yêu cầu bắt đầu mô phỏng.'
+                                });
+                                window.setTimeout(() => {
+                                    setIsSubmitting(false);
+                                    onClose();
+                                }, 700);
+                                return;
+                            }
+                            setIsSubmitting(false);
+                            setActionFeedback({
+                                tone: 'error',
+                                message: activeSimId ? 'Không gửi được đơn hàng. Kiểm tra kết nối/worker.' : 'Không gửi được yêu cầu bắt đầu. Kiểm tra kết nối/worker.'
+                            });
                         }}
                         className="rounded bg-blue-600 px-4 py-2 text-xs font-bold text-white hover:bg-blue-700 disabled:bg-slate-300 disabled:text-slate-500"
                     >

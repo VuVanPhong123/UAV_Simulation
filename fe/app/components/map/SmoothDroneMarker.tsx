@@ -81,6 +81,13 @@ function clamp(value: number, min: number, max: number) {
     return Math.max(min, Math.min(max, value));
 }
 
+function collisionLabel(action?: string | null) {
+    if (!action) return null;
+    if (action.includes('yield')) return 'Nhường đường';
+    if (action.includes('altitude')) return 'Tách độ cao';
+    return 'Né va chạm';
+}
+
 function shouldSnap(from: LatLng | null, to: LatLng, drone: DroneTelemetry) {
     if (!from) return true;
     if (distanceMeters(from, to) > SNAP_DISTANCE_METERS) return true;
@@ -192,6 +199,7 @@ export default function SmoothDroneMarker({
     const altitudeText = typeof drone.altitude === 'number' && Number.isFinite(drone.altitude)
         ? `${drone.altitude.toFixed(0)}m`
         : '--';
+    const collisionText = collisionLabel(drone.collisionAction ?? drone.collisionState);
 
     return (
         <>
@@ -220,7 +228,8 @@ export default function SmoothDroneMarker({
                 }}
             >
                 <Tooltip permanent={active} direction="bottom" className="building-label">
-                    {droneId} / {drone.status ?? '--'} / {typeof battery === 'number' ? `${battery.toFixed(0)}%` : '--'} / {altitudeText}
+                    {droneId} / {typeof battery === 'number' ? `${battery.toFixed(0)}%` : '--'} / {altitudeText}
+                    {collisionText ? ` / ${collisionText}` : ''}
                 </Tooltip>
             </CircleMarker>
         </>

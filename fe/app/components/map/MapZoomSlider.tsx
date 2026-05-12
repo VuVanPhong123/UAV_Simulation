@@ -72,7 +72,7 @@ export default function MapZoomSlider() {
                     setZoom(nextZoom);
                     map.setZoom(nextZoom);
                 }}
-                className="w-32 accent-blue-600"
+                className="w-32 cursor-pointer accent-blue-600"
             />
         </div>
     );

@@ -8,6 +8,7 @@ export const MAX_DEMO_DRONE_COUNT = 15;
 export type ServerStatus = 'connecting' | 'connected' | 'disconnected';
 export type WorkerStatus = 'idle' | 'busy' | 'disconnected' | 'error' | 'unknown';
 export type SimulationStatus = 'idle' | 'running' | 'paused' | 'stopped' | 'failed';
+export type AsyncRequestStatus = 'idle' | 'loading' | 'success' | 'warning' | 'error';
 
 export type ObstacleType = 'unknown' | 'tree' | 'pole' | 'bird' | 'building_crane';
 

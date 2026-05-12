@@ -23,6 +23,7 @@ import type {
     PlannedPathsByDrone,
     ServerStatus,
     SimulationStatus,
+    AsyncRequestStatus,
     WeatherState,
     WorkerStatus
 } from '../types/simulation';
@@ -112,6 +113,10 @@ export function useSimulationSocket() {
     const [orders, setOrders] = useState<OrdersById>({});
     const [missions, setMissions] = useState<MissionsById>({});
     const [eventLogs, setEventLogs] = useState<EventLogEntry[]>([]);
+    const [isStartingSimulation, setIsStartingSimulation] = useState(false);
+    const [isAwaitingConfig, setIsAwaitingConfig] = useState(false);
+    const [isAwaitingFirstTelemetry, setIsAwaitingFirstTelemetry] = useState(false);
+    const [windShadowRequestStatus, setWindShadowRequestStatus] = useState<AsyncRequestStatus>('idle');
 
     useEffect(() => {
         activeSimIdRef.current = activeSimId;
@@ -151,26 +156,38 @@ export function useSimulationSocket() {
         return activeSimIdRef.current === messageSimId;
     }, []);
 
+    const clearPendingStart = useCallback(() => {
+        setIsStartingSimulation(false);
+        setIsAwaitingConfig(false);
+        setIsAwaitingFirstTelemetry(false);
+    }, []);
+
     const sendCommand = useCallback((action: 'pause' | 'resume' | 'stop' | 'reset') => {
         if (!activeSimId) {
             addLocalEvent('warning', 'NO_ACTIVE_SIMULATION', `No active simulation to ${action}.`);
-            return;
+            return false;
         }
-        sendJson({ type: 'command', simId: activeSimId, action });
+        const sent = sendJson({ type: 'command', simId: activeSimId, action });
+        if (!sent) return false;
         if (action === 'pause') setSimulationStatus('paused');
         if (action === 'resume') setSimulationStatus('running');
         if (action === 'stop') {
             setSimulationStatus('stopped');
             clearSessionVisuals();
+            clearPendingStart();
         }
-        if (action === 'reset') clearSessionVisuals();
-    }, [activeSimId, addLocalEvent, clearSessionVisuals, sendJson]);
+        if (action === 'reset') {
+            clearSessionVisuals();
+            setIsAwaitingFirstTelemetry(true);
+        }
+        return true;
+    }, [activeSimId, addLocalEvent, clearPendingStart, clearSessionVisuals, sendJson]);
 
     const startSimulation = useCallback((input: StartSimulationInput = 1) => {
         const droneCount = clampDroneCount(typeof input === 'number' ? input : input.droneCount);
         const orderBatch = typeof input === 'number' ? undefined : input.orderBatch;
         const mapId = typeof input === 'number' ? 'hanoi_my_dinh_me_tri' : input.mapId ?? 'hanoi_my_dinh_me_tri';
-        return sendJson({
+        const sent = sendJson({
             type: 'request_start_simulation',
             payload: {
                 mapId,
@@ -180,14 +197,20 @@ export function useSimulationSocket() {
                 simulationMode: 'order_dispatch'
             }
         });
+        if (sent) {
+            setIsStartingSimulation(true);
+            setIsAwaitingConfig(true);
+            setIsAwaitingFirstTelemetry(true);
+        }
+        return sent;
     }, [sendJson]);
 
     const applyWeather = useCallback((weather: WeatherState) => {
         if (!activeSimId) {
             addLocalEvent('warning', 'NO_ACTIVE_SIMULATION', 'Start a simulation before changing weather.');
-            return;
+            return false;
         }
-        sendJson({
+        return sendJson({
             type: 'weather_update',
             simId: activeSimId,
             ...weather,
@@ -249,12 +272,15 @@ export function useSimulationSocket() {
     const requestWindShadow = useCallback(() => {
         if (!activeSimId) {
             addLocalEvent('warning', 'NO_ACTIVE_SIMULATION', 'Start a simulation before requesting wind shadow zones.');
+            setWindShadowRequestStatus('warning');
             return false;
         }
-        return sendJson({
+        const sent = sendJson({
             type: 'request_wind_shadow',
             simId: activeSimId
         });
+        setWindShadowRequestStatus(sent ? 'loading' : 'error');
+        return sent;
     }, [activeSimId, addLocalEvent, sendJson]);
 
     useEffect(() => {
@@ -277,6 +303,7 @@ export function useSimulationSocket() {
                 activeSimIdRef.current = data.activeSimId ?? null;
                 setActiveSimId(data.activeSimId ?? null);
                 setSimulationStatus(data.activeSimId ? 'running' : 'idle');
+                if (!data.activeSimId) clearPendingStart();
             } else if (data.type === 'worker_status') {
                 const status = (data.status ?? data.payload?.status ?? 'unknown') as WorkerStatus;
                 setWorkerStatus(status);
@@ -284,6 +311,9 @@ export function useSimulationSocket() {
                 activeSimIdRef.current = data.simId ?? null;
                 setActiveSimId(data.simId ?? null);
                 setSimulationStatus('running');
+                setIsStartingSimulation(false);
+                setIsAwaitingConfig(true);
+                setIsAwaitingFirstTelemetry(true);
                 setDrones({});
                 setPlannedPaths({});
                 setPlannedPaths3d({});
@@ -294,6 +324,7 @@ export function useSimulationSocket() {
                 addLocalEvent('info', 'SIMULATION_ASSIGNED', `Simulation assigned to worker ${data.workerId ?? '-'}.`, data.timestamp);
             } else if (data.type === 'worker_busy') {
                 setSimulationStatus('idle');
+                clearPendingStart();
                 addLocalEvent('warning', 'WORKER_BUSY', data.message ?? 'No idle worker available.', data.timestamp);
             } else if (data.type === 'simulation_finished') {
                 if (!isCurrentSimulationMessage(data.simId)) return;
@@ -301,6 +332,7 @@ export function useSimulationSocket() {
                 setSimulationStatus(terminalToStatus(finishedStatus));
                 activeSimIdRef.current = null;
                 setActiveSimId(null);
+                clearPendingStart();
                 clearSessionVisuals();
             } else if (data.type === 'ping') {
                 ws.send(JSON.stringify({ type: 'pong', timestamp: data.timestamp }));
@@ -309,8 +341,12 @@ export function useSimulationSocket() {
             } else if (data.type === 'config') {
                 if (!isCurrentSimulationMessage(data.simId)) return;
                 setMapConfig(data);
+                setIsStartingSimulation(false);
+                setIsAwaitingConfig(false);
             } else if (data.type === 'telemetry') {
                 if (!isCurrentSimulationMessage(data.simId)) return;
+                setIsStartingSimulation(false);
+                setIsAwaitingFirstTelemetry(false);
                 const telemetry = (data.payload ?? data) as DroneTelemetry;
                 const droneId = data.droneId ?? telemetry.droneId ?? 'drone_1';
                 const nextTelemetry = { ...telemetry, droneId };
@@ -322,6 +358,7 @@ export function useSimulationSocket() {
             } else if (data.type === 'wind_shadow_zones') {
                 if (!isCurrentSimulationMessage(data.simId)) return;
                 setWindShadowZones(sampleLatLngPoints(data.payload?.zones ?? data.zones ?? [], WIND_SHADOW_MAX_POINTS));
+                setWindShadowRequestStatus('success');
             } else if (data.type === 'planned_path') {
                 if (!isCurrentSimulationMessage(data.simId)) return;
                 const droneId = data.droneId ?? data.payload?.droneId ?? 'drone_1';
@@ -375,6 +412,7 @@ export function useSimulationSocket() {
             setSimulationStatus('stopped');
             activeSimIdRef.current = null;
             setActiveSimId(null);
+            clearPendingStart();
             clearSessionVisuals();
         };
 
@@ -383,7 +421,7 @@ export function useSimulationSocket() {
         };
 
         return () => ws.close();
-    }, [addLocalEvent, clearSessionVisuals, isCurrentSimulationMessage]);
+    }, [addLocalEvent, clearPendingStart, clearSessionVisuals, isCurrentSimulationMessage]);
 
     return {
         serverStatus,
@@ -405,6 +443,10 @@ export function useSimulationSocket() {
         orders,
         missions,
         eventLogs,
+        isStartingSimulation,
+        isAwaitingConfig,
+        isAwaitingFirstTelemetry,
+        windShadowRequestStatus,
         addLocalEvent,
         startSimulation,
         pauseSimulation: () => sendCommand('pause'),

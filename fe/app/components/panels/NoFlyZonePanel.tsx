@@ -25,6 +25,7 @@ export default function NoFlyZonePanel({
     onCancelPlacement
 }: NoFlyZonePanelProps) {
     const isPlacing = mapInteractionMode === 'no_fly_zone';
+    const recentZones = zones.slice(-5).reverse();
 
     return (
         <section className="rounded border border-slate-200 bg-white p-3">
@@ -63,7 +64,7 @@ export default function NoFlyZonePanel({
                             type="button"
                             data-testid="cancel-no-fly-zone"
                             onClick={onCancelPlacement}
-                            className="w-full rounded border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100"
+                            className="w-full cursor-pointer rounded border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100"
                         >
                             Hủy
                         </button>
@@ -73,7 +74,7 @@ export default function NoFlyZonePanel({
                         type="button"
                         data-testid="create-no-fly-zone"
                         onClick={onStartPlacement}
-                        className="w-full rounded bg-red-600 px-3 py-2 text-xs font-bold text-white hover:bg-red-700"
+                        className="w-full cursor-pointer rounded bg-red-600 px-3 py-2 text-xs font-bold text-white hover:bg-red-700"
                     >
                         Chọn tâm vùng cấm bay trên bản đồ
                     </button>
@@ -81,7 +82,8 @@ export default function NoFlyZonePanel({
                 <div className="space-y-2">
                     <p className="text-xs font-bold uppercase text-slate-500">Vùng tạm thời đã tạo</p>
                     {zones.length > 0 ? (
-                        zones.map(zone => (
+                        <div className="max-h-56 space-y-2 overflow-y-auto">
+                        {recentZones.map(zone => (
                             <div key={zone.id} className="rounded border border-red-100 bg-red-50 px-2 py-2 text-xs text-slate-700">
                                 <div className="flex items-center justify-between gap-2">
                                     <span className="truncate font-mono font-bold">{zone.label ?? zone.id}</span>
@@ -89,7 +91,8 @@ export default function NoFlyZonePanel({
                                 </div>
                                 <p className="mt-1 text-slate-500">Cao {zone.height ?? '--'}m</p>
                             </div>
-                        ))
+                        ))}
+                        </div>
                     ) : (
                         <p className="text-xs italic text-slate-400">Chưa có vùng cấm bay tạm thời.</p>
                     )}

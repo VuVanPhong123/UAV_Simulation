@@ -121,7 +121,7 @@ export default function DroneMissionPanel({
                     {relatedOrder && (
                         <button
                             onClick={() => onSelectOrder(orderIdOf(relatedOrder))}
-                            className="flex w-full items-center justify-between gap-2 text-left"
+                            className="flex w-full cursor-pointer items-center justify-between gap-2 text-left"
                         >
                             <span>Đơn liên kết</span>
                             <span className="truncate font-mono text-blue-700">
@@ -132,7 +132,7 @@ export default function DroneMissionPanel({
                     {relatedMission && (
                         <button
                             onClick={() => onSelectMission(missionIdOf(relatedMission))}
-                            className="flex w-full items-center justify-between gap-2 text-left"
+                            className="flex w-full cursor-pointer items-center justify-between gap-2 text-left"
                         >
                             <span>Nhiệm vụ liên kết</span>
                             <span className="truncate font-mono text-blue-700">
