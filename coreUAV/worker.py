@@ -1,5 +1,6 @@
 import copy
 import json
+import math
 import time
 
 import websocket
@@ -54,6 +55,8 @@ def config_for_map(base_config, requested_map_id=None):
     map_config = next_config.setdefault("map", {})
     presets = map_config.get("presets", {})
     map_id = requested_map_id or map_config.get("map_id") or DEFAULT_MAP_ID
+    if map_id != DEFAULT_MAP_ID:
+        map_id = DEFAULT_MAP_ID
     if map_id not in presets:
         map_id = DEFAULT_MAP_ID
     preset = presets.get(map_id)
@@ -317,26 +320,34 @@ def main():
         }))
 
     def planned_path_payload(agent):
+        def distance_m(a, b):
+            return math.hypot(float(a[0]) - float(b[0]), float(a[1]) - float(b[1]))
+
+        def append_utm_point(utm_pos, altitude):
+            lon, lat = transformer.transform(utm_pos[0], utm_pos[1])
+            gps_pos = [lat, lon]
+            gps_path.append(gps_pos)
+            gps_path3d.append({
+                "pos": gps_pos,
+                "altitude": float(altitude)
+            })
+
         gps_path = []
         gps_path3d = []
         if agent.drone.pos:
-            lon_d, lat_d = transformer.transform(agent.drone.pos[0], agent.drone.pos[1])
-            gps_path.append([lat_d, lon_d])
-            gps_path3d.append({
-                "pos": [lat_d, lon_d],
-                "altitude": float(agent.drone.altitude)
-            })
+            append_utm_point(agent.drone.pos, agent.drone.altitude)
 
-        for point in agent.path[agent.path_index:]:
+        start_index = agent.path_index
+        if agent.drone.pos is not None and start_index < len(agent.path) - 1:
+            start_index += 1
+
+        for point in agent.path[start_index:]:
             node = path_point_node(point)
             altitude = path_point_altitude(point, agent.drone.altitude)
             x, y = world.graph.nodes[node]
-            lon, lat = transformer.transform(x, y)
-            gps_path.append([lat, lon])
-            gps_path3d.append({
-                "pos": [lat, lon],
-                "altitude": float(altitude)
-            })
+            if agent.drone.pos is not None and gps_path and distance_m(agent.drone.pos, (x, y)) <= 1.0:
+                continue
+            append_utm_point((x, y), altitude)
         return {
             "droneId": agent.drone_id,
             "path": gps_path,

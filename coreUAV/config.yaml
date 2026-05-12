@@ -54,30 +54,6 @@
   building_geojson_url: "/maps/hanoi_my_dinh_me_tri_large/buildings.geojson"
   asset_radius_m: 700.0
   presets:
-    hanoi_my_dinh_me_tri:
-      mapId: hanoi_my_dinh_me_tri
-      label: "My Dinh - Me Tri"
-      start_latlng: [21.0163, 105.7840]
-      goal_latlng: [21.0192, 105.7892]
-      charging_stations_latlng:
-        - [21.0147, 105.7819]
-        - [21.0180, 105.7867]
-      no_fly_zones:
-        - center: [21.0169, 105.7835]
-          radius: 55.0
-        - center: [21.0177, 105.7872]
-          radius: 45.0
-      safe_order_points:
-        - [21.0142, 105.7814]
-        - [21.0148, 105.7854]
-        - [21.0162, 105.7890]
-        - [21.0187, 105.7894]
-        - [21.0194, 105.7856]
-        - [21.0175, 105.7815]
-        - [21.0129, 105.7833]
-        - [21.0201, 105.7876]
-      building_geojson_url: "/maps/hanoi_my_dinh_me_tri/buildings.geojson"
-      grid_resolution: 10.0
     hanoi_my_dinh_me_tri_large:
       mapId: hanoi_my_dinh_me_tri_large
       label: "My Dinh - Me Tri Large"

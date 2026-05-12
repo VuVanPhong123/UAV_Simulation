@@ -25,6 +25,7 @@ import {
     translateOrderStatus
 } from '../utils/labels';
 import { ActionStatusMessage } from '../ui/ActionStatus';
+import { MAP_PRESET_OPTIONS } from '../types/simulation';
 import type {
     ActiveDashboardSection,
     AsyncRequestStatus,
@@ -156,6 +157,7 @@ function MapPresetPanel({
     disabled: boolean;
     onOpen: () => void;
 }) {
+    const canSelectMap = MAP_PRESET_OPTIONS.length > 1;
     return (
         <SectionFrame title="Bản đồ mô phỏng">
             <div className="space-y-3">
@@ -173,19 +175,21 @@ function MapPresetPanel({
                         )}
                     </div>
                 </div>
-                {disabled && (
+                {canSelectMap && disabled && (
                     <p className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700">
                         Dừng/đặt lại mô phỏng trước khi đổi bản đồ.
                     </p>
                 )}
-                <button
-                    type="button"
-                    data-testid="open-map-selector"
-                    onClick={onOpen}
-                    className="w-full rounded bg-slate-800 px-3 py-2 text-xs font-bold text-white hover:bg-slate-700"
-                >
-                    Chọn bản đồ
-                </button>
+                {canSelectMap && (
+                    <button
+                        type="button"
+                        data-testid="open-map-selector"
+                        onClick={onOpen}
+                        className="w-full rounded bg-slate-800 px-3 py-2 text-xs font-bold text-white hover:bg-slate-700"
+                    >
+                        Chọn bản đồ
+                    </button>
+                )}
             </div>
         </SectionFrame>
     );

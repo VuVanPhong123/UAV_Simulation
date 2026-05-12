@@ -111,7 +111,13 @@ export function useTelemetryHistory(drones: DronesById, selectedDroneId: string 
         });
     }, [drones]);
 
-    const selectedId = selectedDroneId ?? '';
+    const firstDroneId = Object.keys(drones)[0]
+        ?? Object.keys(histories.batteryHistoryByDrone)[0]
+        ?? Object.keys(histories.temperatureHistoryByDrone)[0]
+        ?? Object.keys(histories.altitudeHistoryByDrone)[0]
+        ?? Object.keys(histories.pathHistoryByDrone)[0]
+        ?? '';
+    const selectedId = selectedDroneId ?? firstDroneId;
     const {
         batteryHistoryByDrone,
         temperatureHistoryByDrone,

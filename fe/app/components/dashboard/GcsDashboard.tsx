@@ -333,7 +333,7 @@ export default function GcsDashboard() {
             return false;
         }
         const normalizedDroneCount = clampDroneCount(droneCount);
-        if (!socket.startSimulation({ mapId: selectedMapId, droneCount: normalizedDroneCount, orderBatch: validDraftOrders })) {
+        if (!socket.startSimulation({ mapId: DEFAULT_MAP_PRESET_ID, droneCount: normalizedDroneCount, orderBatch: validDraftOrders })) {
             return false;
         }
         setDroneCount(normalizedDroneCount);
@@ -341,7 +341,7 @@ export default function GcsDashboard() {
         setTemporaryFeedback('success', 'Đã gửi yêu cầu bắt đầu mô phỏng.');
         addLocalEvent('info', 'ORDER_FIRST_START_REQUESTED', `Bắt đầu mô phỏng với ${validDraftOrders.length} đơn hàng.`);
         return true;
-    }, [addLocalEvent, canStartWithOrders, droneCount, selectedMapId, setTemporaryFeedback, socket, startHint, validDraftOrders]);
+    }, [addLocalEvent, canStartWithOrders, droneCount, setTemporaryFeedback, socket, startHint, validDraftOrders]);
 
     const handleDroneCountChange = useCallback((value: number) => {
         setDroneCount(clampDroneCount(value));
@@ -586,7 +586,9 @@ export default function GcsDashboard() {
                     selectedMapId={selectedMapId}
                     selectedMapLabel={selectedMapPreset.label}
                     activeMapId={activeMapId}
-                    onOpenMapSelector={() => setMapSelectorOpen(true)}
+                    onOpenMapSelector={() => {
+                        if (MAP_PRESET_OPTIONS.length > 1) setMapSelectorOpen(true);
+                    }}
                     mapChangeDisabled={mapChangeDisabled}
                     selectedOrderId={selectedOrderId}
                     selectedMissionId={selectedMissionId}
@@ -631,15 +633,17 @@ export default function GcsDashboard() {
                     onToggleCollapsed={() => setRightPanelCollapsed(prev => !prev)}
                 />
             </div>
-            <MapSelectorModal
-                open={mapSelectorOpen}
-                selectedMapId={selectedMapId}
-                activeMapId={activeMapId}
-                disabled={mapChangeDisabled}
-                simulationRunning={socket.simulationStatus === 'running'}
-                onClose={() => setMapSelectorOpen(false)}
-                onSelectMap={handleSelectMap}
-            />
+            {MAP_PRESET_OPTIONS.length > 1 && (
+                <MapSelectorModal
+                    open={mapSelectorOpen}
+                    selectedMapId={selectedMapId}
+                    activeMapId={activeMapId}
+                    disabled={mapChangeDisabled}
+                    simulationRunning={socket.simulationStatus === 'running'}
+                    onClose={() => setMapSelectorOpen(false)}
+                    onSelectMap={handleSelectMap}
+                />
+            )}
         </div>
     );
 }

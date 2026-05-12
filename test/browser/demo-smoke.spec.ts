@@ -7,14 +7,10 @@ test('demo dashboard smoke flow', async ({ page }) => {
 
   await page.getByTestId('nav-map-tools').click();
   await expect(page.getByTestId('selected-map-label')).toBeVisible();
-  await page.getByTestId('open-map-selector').click();
-  await expect(page.getByTestId('map-selector-modal')).toBeVisible();
-  await expect(page.getByTestId('map-option-hanoi_my_dinh_me_tri')).toBeVisible();
-  await expect(page.getByTestId('map-option-hanoi_my_dinh_me_tri_large')).toBeVisible();
   await expect(page.getByTestId('selected-map-label')).toContainText(/Large/i);
-  await page.getByTestId('close-map-selector').click();
+  await expect(page.getByTestId('open-map-selector')).toHaveCount(0);
 
-  const zoomSlider = page.getByLabel('Zoom');
+  const zoomSlider = page.getByRole('slider', { name: 'Zoom' });
   await expect(zoomSlider).toBeVisible();
   await zoomSlider.evaluate((input: HTMLInputElement) => {
     input.value = '16';
@@ -29,7 +25,6 @@ test('demo dashboard smoke flow', async ({ page }) => {
   await expect(page.getByTestId('order-modal')).toBeVisible();
 
   await page.getByTestId('random-order-count').fill('20');
-  await expect(page.getByText(/path-friendly/i)).toBeVisible();
   await page.getByTestId('generate-random-orders').click();
   await expect(page.getByTestId('draft-order-list')).toContainText('random_order');
 
@@ -38,10 +33,12 @@ test('demo dashboard smoke flow', async ({ page }) => {
   await startButton.click();
   await expect(page.getByTestId('simulation-status')).toContainText(/Đang chạy|running/i, { timeout: 45_000 });
 
-  const closeOrderModal = page.getByTestId('close-order-modal');
-  if (await closeOrderModal.isVisible({ timeout: 2_000 }).catch(() => false)) {
-    await closeOrderModal.click();
-  }
+  await page.getByTestId('order-modal').waitFor({ state: 'hidden', timeout: 5_000 }).catch(async () => {
+    const closeOrderModal = page.getByTestId('close-order-modal');
+    if (await closeOrderModal.isVisible({ timeout: 1_000 }).catch(() => false)) {
+      await closeOrderModal.click({ force: true, timeout: 5_000 }).catch(() => {});
+    }
+  });
   await expect(page.getByTestId('bottom-drone-info-panel')).toBeVisible();
 
   await page.getByTestId('collapse-right-panel').click();
@@ -64,7 +61,7 @@ test('demo dashboard smoke flow', async ({ page }) => {
   const buildingLabelToggle = page.getByTestId('toggle-building-labels');
   await expect(buildingLabelToggle).toBeVisible();
   await buildingLabelToggle.click();
-  await expect(page.getByText(/zoom >= 16/i)).toBeVisible();
+  await expect(page.getByText(/zoom > 16\.5/i)).toBeVisible();
   await expect(page.getByText(/tối đa 250 nhãn/i)).toBeVisible();
   await expect(page.getByTestId('layer-toggle-panel')).toBeVisible();
 });

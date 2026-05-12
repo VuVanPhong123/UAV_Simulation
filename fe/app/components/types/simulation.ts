@@ -9,7 +9,7 @@ export type MapBounds = {
     east: number;
 };
 
-export type MapPresetId = 'hanoi_my_dinh_me_tri' | 'hanoi_my_dinh_me_tri_large';
+export type MapPresetId = 'hanoi_my_dinh_me_tri_large';
 
 export type MapPresetOption = {
     mapId: MapPresetId;
@@ -25,14 +25,6 @@ export const MAX_DEMO_DRONE_COUNT = 15;
 export const DEFAULT_MAP_PRESET_ID: MapPresetId = 'hanoi_my_dinh_me_tri_large';
 
 export const MAP_PRESET_OPTIONS: MapPresetOption[] = [
-    {
-        mapId: 'hanoi_my_dinh_me_tri',
-        label: 'Mỹ Đình - Mễ Trì',
-        description: 'Vùng tiêu chuẩn cho demo nhanh và ít đơn.',
-        sizeLabel: 'Standard',
-        recommendedUse: '1-5 UAV, 5-20 đơn',
-        buildingGeoJsonUrl: '/maps/hanoi_my_dinh_me_tri/buildings.geojson'
-    },
     {
         mapId: 'hanoi_my_dinh_me_tri_large',
         label: 'Mỹ Đình - Mễ Trì Large',
@@ -105,40 +97,6 @@ export type MapConfig = {
 };
 
 export const PRESET_PREVIEW_MAP_CONFIGS: Record<MapPresetId, MapConfig> = {
-    hanoi_my_dinh_me_tri: {
-        mapId: 'hanoi_my_dinh_me_tri',
-        mapLabel: 'Mỹ Đình - Mễ Trì',
-        buildingGeoJsonUrl: '/maps/hanoi_my_dinh_me_tri/buildings.geojson',
-        bounds: {
-            south: 21.0128,
-            west: 105.7798,
-            north: 21.0211,
-            east: 105.7912
-        },
-        start: [21.0163, 105.7840],
-        goal: [21.0192, 105.7892],
-        depot: [21.0163, 105.7840],
-        simulationMode: 'order_dispatch',
-        hasFixedGoal: false,
-        charging_stations: [
-            [21.0147, 105.7819],
-            [21.0180, 105.7867]
-        ],
-        no_fly_zones: [
-            { center: [21.0169, 105.7835], radius: 55.0 },
-            { center: [21.0177, 105.7872], radius: 45.0 }
-        ],
-        safeOrderPoints: [
-            [21.0142, 105.7814],
-            [21.0148, 105.7854],
-            [21.0162, 105.7890],
-            [21.0187, 105.7894],
-            [21.0194, 105.7856],
-            [21.0175, 105.7815],
-            [21.0129, 105.7833],
-            [21.0201, 105.7876]
-        ]
-    },
     hanoi_my_dinh_me_tri_large: {
         mapId: 'hanoi_my_dinh_me_tri_large',
         mapLabel: 'Mỹ Đình - Mễ Trì Large',

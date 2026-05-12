@@ -214,14 +214,17 @@ function requestStartSimulation(ws, data) {
         timestamp: nowMs()
     });
 
+    const startPayload = {
+        droneCount: 1,
+        ...(data.payload ?? {}),
+        mapId: 'hanoi_my_dinh_me_tri_large'
+    };
+
     safeSend(idleWorker.workerWs, {
         type: 'start_simulation',
         simId,
         frontendId: frontendMeta.id,
-        payload: data.payload ?? {
-            mapId: 'hanoi_my_dinh_me_tri',
-            droneCount: 1
-        }
+        payload: startPayload
     });
 
     markWorkerStatus(idleWorker.workerId, 'busy');

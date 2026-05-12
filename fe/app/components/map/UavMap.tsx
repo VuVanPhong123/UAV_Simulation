@@ -40,7 +40,8 @@ const Pane = dynamic(() => import('react-leaflet').then(mod => mod.Pane), { ssr:
 const MAX_WIND_SHADOW_POINTS = 400;
 const MAX_RENDERED_PLANNED_PATH_POINTS = 250;
 const MAX_RENDERED_HISTORY_POINTS = 200;
-const BUILDING_LABEL_ZOOM_THRESHOLD = 16;
+const BUILDING_RENDER_ZOOM_THRESHOLD = 16.5;
+const BUILDING_LABEL_ZOOM_THRESHOLD = 16.5;
 const MAX_BUILDING_LABELS = 250;
 const MIN_BUILDING_LABEL_HEIGHT = 20;
 
@@ -173,7 +174,8 @@ export default function UavMap({
     const hasFixedGoal = mapConfig?.hasFixedGoal !== false && mapConfig?.simulationMode !== 'order_dispatch';
     const mapCenter = mapConfig ? depot : defaultCenter;
     const [currentZoom, setCurrentZoom] = useState(BUILDING_LABEL_ZOOM_THRESHOLD);
-    const showBuildingLabels = layers.buildingLabels && currentZoom >= BUILDING_LABEL_ZOOM_THRESHOLD;
+    const showBuildings = layers.buildings && Boolean(buildings) && currentZoom > BUILDING_RENDER_ZOOM_THRESHOLD;
+    const showBuildingLabels = layers.buildingLabels && currentZoom > BUILDING_LABEL_ZOOM_THRESHOLD;
     const selectedDrone = selectedDroneId ? drones[selectedDroneId] : null;
     const sampledZones = useMemo(() => {
         if (!layers.windShadow) return [];
@@ -190,6 +192,11 @@ export default function UavMap({
             .filter(item => item.path.length >= 2),
         [pathHistoryByDrone]
     );
+    const selectedPathHistory = useMemo(() => {
+        if (!selectedDroneId) return [];
+        const path = pathHistoryByDrone[selectedDroneId] ?? [];
+        return path.length >= 2 ? samplePolylinePositions(path, MAX_RENDERED_HISTORY_POINTS) : [];
+    }, [pathHistoryByDrone, selectedDroneId]);
     const selectedMission = selectedMissionId ? missions[selectedMissionId] ?? null : null;
     const buildingData = useMemo(() => {
         if (!buildings || buildings.type !== 'FeatureCollection') return buildings;
@@ -302,12 +309,16 @@ export default function UavMap({
                         <AltitudeLegend />
                     </div>
                 </div>
+                <Pane name="windShadowPane" style={{ zIndex: 430, pointerEvents: 'none' }} />
+                <Pane name="pathHistoryPane" style={{ zIndex: 610, pointerEvents: 'none' }} />
+                <Pane name="plannedPathPane" style={{ zIndex: 630, pointerEvents: 'none' }} />
                 <Pane name="uavSensorPane" style={{ zIndex: 690, pointerEvents: 'none' }} />
+                <Pane name="selectedHistoryPane" style={{ zIndex: 695, pointerEvents: 'none' }} />
                 <Pane name="uavPane" style={{ zIndex: 700 }} />
 
-                {layers.buildings && buildingData && (
+                {showBuildings && buildingData && (
                     <GeoJSON
-                        key={`buildings-${showBuildingLabels ? 'labels' : 'plain'}-${currentZoom >= BUILDING_LABEL_ZOOM_THRESHOLD ? 'zoomed' : 'far'}`}
+                        key={`buildings-${showBuildingLabels ? 'labels' : 'plain'}-${currentZoom > BUILDING_RENDER_ZOOM_THRESHOLD ? 'zoomed' : 'far'}`}
                         data={buildingData}
                         filter={(feature: Feature<Geometry, GeoJsonProperties>) => {
                             const geometryType = feature.geometry?.type;
@@ -364,6 +375,7 @@ export default function UavMap({
 
                 {layers.plannedPath && selectedDroneId && renderedPlannedPath.length > 0 && (
                     <Polyline
+                        pane="plannedPathPane"
                         key={`planned-${selectedDroneId}`}
                         positions={renderedPlannedPath}
                         pathOptions={{
@@ -377,15 +389,29 @@ export default function UavMap({
 
                 {layers.pathHistory && renderedPathHistories.map(item => (
                     <Polyline
+                        pane="pathHistoryPane"
                         key={`history-${item.droneId}`}
                         positions={item.path}
                         pathOptions={{
-                            color: item.droneId === selectedDroneId ? '#2563eb' : '#38bdf8',
-                            weight: item.droneId === selectedDroneId ? 4 : 2,
-                            opacity: item.droneId === selectedDroneId ? 0.8 : 0.35
+                            color: '#38bdf8',
+                            weight: 2,
+                            opacity: 0.3
                         }}
                     />
                 ))}
+
+                {selectedDroneId && selectedPathHistory.length >= 2 && (
+                    <Polyline
+                        pane="selectedHistoryPane"
+                        key={`selected-history-${selectedDroneId}`}
+                        positions={selectedPathHistory}
+                        pathOptions={{
+                            color: '#1d4ed8',
+                            weight: 5,
+                            opacity: 0.95
+                        }}
+                    />
+                )}
 
                 {layers.windShadow && sampledZones.length === 0 && (
                     <div className="absolute right-4 top-50 z-[500] rounded border border-emerald-200 bg-white px-3 py-2 text-xs font-bold text-emerald-700 shadow-sm">
@@ -394,7 +420,13 @@ export default function UavMap({
                 )}
 
                 {layers.windShadow && sampledZones.map((pos, idx) => (
-                    <CircleMarker key={`shadow-${idx}`} center={pos} radius={2} pathOptions={{ color: '#86efac', fillColor: '#bbf7d0', fillOpacity: 0.18, opacity: 0.28 }} />
+                    <CircleMarker
+                        pane="windShadowPane"
+                        key={`shadow-${idx}`}
+                        center={pos}
+                        radius={3.5}
+                        pathOptions={{ color: '#6366f1', fillColor: '#8b5cf6', fillOpacity: 0.32, opacity: 0.55, weight: 1 }}
+                    />
                 ))}
 
                 {layers.dynamicObstacles && dynamicObstacles.map((obstacle, idx) => {

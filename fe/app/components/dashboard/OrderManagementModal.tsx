@@ -51,16 +51,6 @@ const RANDOM_ORDER_MAX_ATTEMPTS = 200;
 const NO_FLY_BUFFER_METERS = 20;
 const FALLBACK_BOUNDS_PADDING_METERS = 200;
 const LOCAL_SAFE_ORDER_POINTS_BY_MAP: Record<string, LatLng[]> = {
-    hanoi_my_dinh_me_tri: [
-        [21.0142, 105.7814],
-        [21.0148, 105.7854],
-        [21.0162, 105.7890],
-        [21.0187, 105.7894],
-        [21.0194, 105.7856],
-        [21.0175, 105.7815],
-        [21.0129, 105.7833],
-        [21.0201, 105.7876]
-    ],
     hanoi_my_dinh_me_tri_large: [
         [21.0058, 105.7708],
         [21.0064, 105.7768],

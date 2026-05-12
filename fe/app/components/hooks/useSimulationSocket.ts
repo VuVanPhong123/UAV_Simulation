@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+    DEFAULT_MAP_PRESET_ID,
     DEFAULT_DEMO_DRONE_COUNT,
     MAX_DEMO_DRONE_COUNT
 } from '../types/simulation';
@@ -48,6 +49,96 @@ function sampleLatLngPoints(points: LatLng[], maxPoints: number) {
     if (points.length <= maxPoints) return points;
     const step = Math.ceil(points.length / maxPoints);
     return points.filter((_, idx) => idx % step === 0).slice(0, maxPoints);
+}
+
+function isLatLng(value: unknown): value is LatLng {
+    return Boolean(
+        Array.isArray(value)
+        && value.length === 2
+        && Number.isFinite(value[0])
+        && Number.isFinite(value[1])
+    );
+}
+
+function normalizePath3dPoint(value: unknown): PlannedPath3DPoint | null {
+    if (!value || typeof value !== 'object') return null;
+    const record = value as { pos?: unknown; altitude?: unknown };
+    if (!isLatLng(record.pos)) return null;
+    const altitude = Number(record.altitude);
+    return {
+        pos: record.pos,
+        altitude: Number.isFinite(altitude) ? altitude : 0
+    };
+}
+
+function normalizeTelemetry(data: IncomingMessage): DroneTelemetry {
+    const payload = (data.payload ?? {}) as Partial<DroneTelemetry>;
+    const message = data as IncomingMessage & Partial<DroneTelemetry>;
+    const value = <K extends keyof DroneTelemetry>(key: K): DroneTelemetry[K] | undefined => (
+        payload[key] ?? message[key]
+    );
+    const batteryPercent = payload.batteryPercent ?? message.batteryPercent ?? payload.battery ?? message.battery;
+    const battery = payload.battery ?? message.battery ?? batteryPercent;
+    const pos = payload.pos ?? message.pos;
+
+    return {
+        droneId: data.droneId ?? payload.droneId ?? 'drone_1',
+        pos: isLatLng(pos) ? pos : undefined,
+        battery,
+        batteryPercent,
+        altitude: value('altitude'),
+        targetAltitude: value('targetAltitude'),
+        altitudeChangeRate: value('altitudeChangeRate'),
+        speed: value('speed'),
+        heading: value('heading'),
+        temperature: value('temperature'),
+        status: value('status'),
+        mode: value('mode'),
+        step: value('step'),
+        energyConsumed: value('energyConsumed'),
+        windDir: value('windDir'),
+        windSpeed: value('windSpeed'),
+        ambientTemp: value('ambientTemp'),
+        isRaining: value('isRaining'),
+        currentPathIndex: value('currentPathIndex'),
+        pathLength: value('pathLength'),
+        currentOrderId: value('currentOrderId'),
+        currentMissionId: value('currentMissionId'),
+        currentTargetType: value('currentTargetType'),
+        payloadKg: value('payloadKg'),
+        collisionState: value('collisionState'),
+        collisionPeerId: value('collisionPeerId'),
+        collisionDistanceM: value('collisionDistanceM'),
+        collisionAction: value('collisionAction'),
+        collisionAvoidanceReason: value('collisionAvoidanceReason')
+    };
+}
+
+function normalizePlannedPath(data: IncomingMessage) {
+    const payload = data.payload ?? {};
+    const droneId = data.droneId ?? payload.droneId ?? 'drone_1';
+    const rawPath3d = payload.path3d ?? data.path3d;
+    const rawPath = payload.path ?? data.path;
+    const path3d = Array.isArray(rawPath3d)
+        ? rawPath3d.map(normalizePath3dPoint).filter((point): point is PlannedPath3DPoint => point !== null)
+        : [];
+
+    if (path3d.length > 0) {
+        return {
+            droneId,
+            path: path3d.map(point => point.pos),
+            path3d
+        };
+    }
+
+    const path = Array.isArray(rawPath)
+        ? rawPath.filter(isLatLng)
+        : [];
+    return {
+        droneId,
+        path,
+        path3d: path.map(pos => ({ pos, altitude: 0 }))
+    };
 }
 
 function pathSignature(path: LatLng[], path3d: PlannedPath3DPoint[]) {
@@ -149,7 +240,9 @@ export function useSimulationSocket() {
         setMissions({});
     }, []);
 
-    const selectedDrone = selectedDroneId ? drones[selectedDroneId] ?? null : null;
+    const firstDroneId = Object.keys(drones)[0] ?? null;
+    const effectiveSelectedDroneId = selectedDroneId ?? firstDroneId;
+    const selectedDrone = effectiveSelectedDroneId ? drones[effectiveSelectedDroneId] ?? null : null;
     const selectedPlannedPath = selectedDroneId ? plannedPaths[selectedDroneId] ?? [] : [];
     const selectedPath3d = selectedDroneId ? plannedPaths3d[selectedDroneId] ?? [] : [];
 
@@ -188,7 +281,7 @@ export function useSimulationSocket() {
     const startSimulation = useCallback((input: StartSimulationInput = 1) => {
         const droneCount = clampDroneCount(typeof input === 'number' ? input : input.droneCount);
         const orderBatch = typeof input === 'number' ? undefined : input.orderBatch;
-        const mapId = typeof input === 'number' ? 'hanoi_my_dinh_me_tri_large' : input.mapId ?? 'hanoi_my_dinh_me_tri_large';
+        const mapId = DEFAULT_MAP_PRESET_ID;
         const sent = sendJson({
             type: 'request_start_simulation',
             payload: {
@@ -349,12 +442,11 @@ export function useSimulationSocket() {
                 if (!isCurrentSimulationMessage(data.simId)) return;
                 setIsStartingSimulation(false);
                 setIsAwaitingFirstTelemetry(false);
-                const telemetry = (data.payload ?? data) as DroneTelemetry;
-                const droneId = data.droneId ?? telemetry.droneId ?? 'drone_1';
-                const nextTelemetry = { ...telemetry, droneId };
+                const nextTelemetry = normalizeTelemetry(data);
+                const droneId = nextTelemetry.droneId ?? 'drone_1';
                 setDrones(prev => ({ ...prev, [droneId]: nextTelemetry }));
-                if (telemetry.status === 'paused') setSimulationStatus('paused');
-                else if (telemetry.status && !['success', 'failed', 'emergency_landing'].includes(telemetry.status) && activeSimIdRef.current) {
+                if (nextTelemetry.status === 'paused') setSimulationStatus('paused');
+                else if (nextTelemetry.status && !['success', 'failed', 'emergency_landing'].includes(nextTelemetry.status) && activeSimIdRef.current) {
                     setSimulationStatus('running');
                 }
             } else if (data.type === 'wind_shadow_zones') {
@@ -363,9 +455,7 @@ export function useSimulationSocket() {
                 setWindShadowRequestStatus('success');
             } else if (data.type === 'planned_path') {
                 if (!isCurrentSimulationMessage(data.simId)) return;
-                const droneId = data.droneId ?? data.payload?.droneId ?? 'drone_1';
-                const path = data.payload?.path ?? data.path ?? [];
-                const path3d = data.payload?.path3d ?? data.path3d ?? [];
+                const { droneId, path, path3d } = normalizePlannedPath(data);
                 const signature = pathSignature(path, path3d);
                 if (plannedPathSignaturesRef.current[droneId] === signature) return;
                 plannedPathSignaturesRef.current[droneId] = signature;

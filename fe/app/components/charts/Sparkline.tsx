@@ -11,10 +11,18 @@ export default function Sparkline({ values, height = 36, stroke = '#2563eb', lab
     const width = 160;
     const cleanValues = values.filter(value => Number.isFinite(value));
 
-    if (cleanValues.length < 2) {
+    if (cleanValues.length === 0) {
         return (
             <div className="flex h-9 items-center justify-center rounded border border-slate-200 bg-slate-50 text-[10px] font-semibold text-slate-400">
                 {label ?? 'No data'}
+            </div>
+        );
+    }
+
+    if (cleanValues.length === 1) {
+        return (
+            <div className="flex h-9 items-center justify-center rounded border border-slate-200 bg-slate-50 text-[10px] font-semibold text-slate-600">
+                Hiện tại: {cleanValues[0].toFixed(1)}
             </div>
         );
     }

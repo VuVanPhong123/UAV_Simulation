@@ -42,7 +42,7 @@ export default function LayerTogglePanel({
                             <span className="block">{label}</span>
                             {key === 'buildingLabels' && (
                                 <span className="mt-0.5 block text-[11px] font-semibold text-slate-500">
-                                    Hiển thị khi zoom &gt;= 16, chỉ show nhãn có độ cao hơn 20m
+                                    Hiển thị khi zoom &gt; 16.5, tối đa 250 nhãn có độ cao hơn 20m
                                 </span>
                             )}
                         </span>
