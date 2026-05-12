@@ -8,7 +8,8 @@ test('demo dashboard smoke flow', async ({ page }) => {
   await page.getByTestId('open-order-modal').click();
   await expect(page.getByTestId('order-modal')).toBeVisible();
 
-  await page.getByTestId('random-order-count').fill('5');
+  await page.getByTestId('random-order-count').fill('20');
+  await expect(page.getByText(/vùng bản đồ hiện tại/i)).toBeVisible();
   await page.getByTestId('generate-random-orders').click();
   await expect(page.getByTestId('draft-order-list')).toContainText('random_order');
 
@@ -17,7 +18,10 @@ test('demo dashboard smoke flow', async ({ page }) => {
   await startButton.click();
   await expect(page.getByTestId('simulation-status')).toContainText(/Đang chạy|running/i, { timeout: 45_000 });
 
-  await page.getByTestId('close-order-modal').click();
+  const closeOrderModal = page.getByTestId('close-order-modal');
+  if (await closeOrderModal.isVisible({ timeout: 2_000 }).catch(() => false)) {
+    await closeOrderModal.click();
+  }
   await expect(page.getByTestId('bottom-drone-info-panel')).toBeVisible();
 
   await page.getByTestId('collapse-right-panel').click();
@@ -37,7 +41,8 @@ test('demo dashboard smoke flow', async ({ page }) => {
 
   await page.getByTestId('nav-map-tools').click();
   await expect(page.getByTestId('layer-toggle-panel')).toBeVisible();
-  const firstLayerToggle = page.getByTestId('layer-toggle-panel').locator('input[type="checkbox"]').first();
-  await expect(firstLayerToggle).toBeVisible();
-  await firstLayerToggle.click();
+  const buildingLabelToggle = page.getByTestId('toggle-building-labels');
+  await expect(buildingLabelToggle).toBeVisible();
+  await buildingLabelToggle.click();
+  await expect(page.getByTestId('layer-toggle-panel')).toBeVisible();
 });

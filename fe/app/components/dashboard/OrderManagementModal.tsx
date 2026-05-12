@@ -9,7 +9,9 @@ import {
 } from '../utils/labels';
 import type {
     DraftOrder,
+    DynamicNoFlyZone,
     LatLng,
+    MapBounds,
     MapConfig,
     MapInteractionMode,
     OrderPriority
@@ -22,6 +24,7 @@ type OrderManagementModalProps = {
     draftOrders: DraftOrder[];
     activeSimId: string | null;
     mapConfig: MapConfig | null;
+    dynamicNoFlyZones?: DynamicNoFlyZone[];
     mapInteractionMode: MapInteractionMode;
     importError: string | null;
     isStartingSimulation?: boolean;
@@ -39,7 +42,14 @@ type OrderManagementModalProps = {
 
 const priorities: OrderPriority[] = ['low', 'normal', 'high', 'urgent'];
 const randomPriorities: OrderPriority[] = ['low', 'normal', 'high'];
+const DEFAULT_RANDOM_ORDER_COUNT = 20;
+const MAX_RANDOM_ORDER_COUNT = 100;
+const MAX_IMPORT_ORDER_COUNT = 200;
+const MIN_PICKUP_DROPOFF_DISTANCE_METERS = 100;
+const RANDOM_POINT_MAX_ATTEMPTS_PER_POINT = 80;
+const RANDOM_ORDER_MAX_ATTEMPTS = 200;
 const NO_FLY_BUFFER_METERS = 20;
+const FALLBACK_BOUNDS_PADDING_METERS = 200;
 const LOCAL_SAFE_ORDER_POINTS_BY_MAP: Record<string, LatLng[]> = {
     hanoi_my_dinh_me_tri: [
         [21.0142, 105.7814],
@@ -54,8 +64,8 @@ const LOCAL_SAFE_ORDER_POINTS_BY_MAP: Record<string, LatLng[]> = {
 };
 
 function clampOrderCount(value: number) {
-    if (!Number.isFinite(value)) return 1;
-    return Math.max(1, Math.min(30, Math.floor(value)));
+    if (!Number.isFinite(value)) return DEFAULT_RANDOM_ORDER_COUNT;
+    return Math.max(1, Math.min(MAX_RANDOM_ORDER_COUNT, Math.floor(value)));
 }
 
 function randomIndex(max: number) {
@@ -77,10 +87,121 @@ function distanceMeters(a: LatLng, b: LatLng) {
     return 2 * earthRadiusMeters * Math.asin(Math.sqrt(h));
 }
 
-function isInsideNoFlyZone(point: LatLng, noFlyZones: MapConfig['no_fly_zones'] = []) {
+type NoFlyZoneLike = { center: LatLng; radius: number };
+
+function isFiniteLatLng(point: LatLng | null | undefined): point is LatLng {
+    return Boolean(
+        Array.isArray(point)
+        && point.length === 2
+        && Number.isFinite(point[0])
+        && Number.isFinite(point[1])
+        && point[0] >= -90
+        && point[0] <= 90
+        && point[1] >= -180
+        && point[1] <= 180
+    );
+}
+
+function isInsideNoFlyZone(point: LatLng, noFlyZones: NoFlyZoneLike[] = []) {
     return noFlyZones.some(zone => (
-        distanceMeters(point, zone.center) <= Number(zone.radius ?? 0) + NO_FLY_BUFFER_METERS
+        isFiniteLatLng(zone.center)
+        && distanceMeters(point, zone.center) <= Number(zone.radius ?? 0) + NO_FLY_BUFFER_METERS
     ));
+}
+
+function isValidBounds(bounds: MapBounds | null | undefined): bounds is MapBounds {
+    return Boolean(
+        bounds
+        && Number.isFinite(bounds.south)
+        && Number.isFinite(bounds.west)
+        && Number.isFinite(bounds.north)
+        && Number.isFinite(bounds.east)
+        && bounds.south >= -90
+        && bounds.north <= 90
+        && bounds.west >= -180
+        && bounds.east <= 180
+        && bounds.south < bounds.north
+        && bounds.west < bounds.east
+    );
+}
+
+function paddedBoundsForPoints(points: LatLng[], paddingMeters = FALLBACK_BOUNDS_PADDING_METERS): MapBounds | null {
+    const finitePoints = points.filter(isFiniteLatLng);
+    if (finitePoints.length === 0) return null;
+
+    const lats = finitePoints.map(point => point[0]);
+    const lngs = finitePoints.map(point => point[1]);
+    const centerLat = lats.reduce((sum, value) => sum + value, 0) / lats.length;
+    const latPadding = paddingMeters / 111320;
+    const lngPadding = paddingMeters / Math.max(20000, 111320 * Math.cos(toRadians(centerLat)));
+    const bounds = {
+        south: Math.max(-90, Math.min(...lats) - latPadding),
+        west: Math.max(-180, Math.min(...lngs) - lngPadding),
+        north: Math.min(90, Math.max(...lats) + latPadding),
+        east: Math.min(180, Math.max(...lngs) + lngPadding)
+    };
+    return isValidBounds(bounds) ? bounds : null;
+}
+
+function normalizeBounds(mapConfig: MapConfig | null): MapBounds | null {
+    if (isValidBounds(mapConfig?.bounds)) {
+        return mapConfig.bounds;
+    }
+
+    const inferredPoints: LatLng[] = [];
+    if (isFiniteLatLng(mapConfig?.start)) inferredPoints.push(mapConfig.start);
+    if (isFiniteLatLng(mapConfig?.goal)) inferredPoints.push(mapConfig.goal);
+    if (isFiniteLatLng(mapConfig?.depot)) inferredPoints.push(mapConfig.depot);
+    mapConfig?.safeOrderPoints?.forEach(point => {
+        if (isFiniteLatLng(point)) inferredPoints.push(point);
+    });
+    mapConfig?.charging_stations?.forEach(point => {
+        if (isFiniteLatLng(point)) inferredPoints.push(point);
+    });
+    mapConfig?.no_fly_zones?.forEach(zone => {
+        if (isFiniteLatLng(zone.center)) inferredPoints.push(zone.center);
+    });
+
+    return paddedBoundsForPoints(inferredPoints);
+}
+
+function randomPointInBounds(bounds: MapBounds): LatLng {
+    return [
+        bounds.south + Math.random() * (bounds.north - bounds.south),
+        bounds.west + Math.random() * (bounds.east - bounds.west)
+    ];
+}
+
+function isPointInsideBounds(point: LatLng, bounds: MapBounds | null) {
+    if (!bounds) return true;
+    return point[0] >= bounds.south
+        && point[0] <= bounds.north
+        && point[1] >= bounds.west
+        && point[1] <= bounds.east;
+}
+
+function isUsableRandomPoint(
+    point: LatLng,
+    mapConfig: MapConfig | null,
+    bounds: MapBounds | null,
+    dynamicNoFlyZones: DynamicNoFlyZone[] = []
+) {
+    if (!isFiniteLatLng(point) || !isPointInsideBounds(point, bounds)) return false;
+    if (isInsideNoFlyZone(point, mapConfig?.no_fly_zones ?? [])) return false;
+    if (isInsideNoFlyZone(point, dynamicNoFlyZones)) return false;
+    return true;
+}
+
+function randomUsablePoint(
+    mapConfig: MapConfig | null,
+    bounds: MapBounds,
+    dynamicNoFlyZones: DynamicNoFlyZone[] = []
+) {
+    for (let attempt = 0; attempt < RANDOM_POINT_MAX_ATTEMPTS_PER_POINT; attempt += 1) {
+        const point = randomPointInBounds(bounds);
+        if (isUsableRandomPoint(point, mapConfig, bounds, dynamicNoFlyZones)) return point;
+    }
+    return null;
 }
 
 function midpoint(a: LatLng, b: LatLng): LatLng {
@@ -88,9 +209,7 @@ function midpoint(a: LatLng, b: LatLng): LatLng {
 }
 
 function isReasonableDemoPoint(point: LatLng, mapConfig: MapConfig | null) {
-    if (!Array.isArray(point) || point.length !== 2 || !Number.isFinite(point[0]) || !Number.isFinite(point[1])) {
-        return false;
-    }
+    if (!isFiniteLatLng(point)) return false;
     if (!mapConfig) return true;
 
     const start = mapConfig.start ?? mapConfig.depot;
@@ -103,42 +222,79 @@ function isReasonableDemoPoint(point: LatLng, mapConfig: MapConfig | null) {
     return distanceMeters(point, demoCenter) <= maxRadius;
 }
 
-function safeDemoPoints(mapConfig: MapConfig | null) {
-    const noFlyZones = mapConfig?.no_fly_zones ?? [];
+function safeDemoPoints(mapConfig: MapConfig | null, dynamicNoFlyZones: DynamicNoFlyZone[] = []) {
+    const noFlyZones = [...(mapConfig?.no_fly_zones ?? []), ...dynamicNoFlyZones];
     const localFallback = LOCAL_SAFE_ORDER_POINTS_BY_MAP[mapConfig?.mapId ?? 'hanoi_my_dinh_me_tri']
         ?? LOCAL_SAFE_ORDER_POINTS_BY_MAP.hanoi_my_dinh_me_tri;
     const sourcePoints = mapConfig?.safeOrderPoints && mapConfig.safeOrderPoints.length >= 2
         ? mapConfig.safeOrderPoints
         : localFallback;
     const filtered = sourcePoints.filter(point => (
-        isReasonableDemoPoint(point, mapConfig)
+        isFiniteLatLng(point)
+        && isReasonableDemoPoint(point, mapConfig)
         && !isInsideNoFlyZone(point, noFlyZones)
     ));
     if (filtered.length >= 2) return filtered;
 
-    const fallback = sourcePoints.filter(point => !isInsideNoFlyZone(point, noFlyZones));
-    return fallback.length >= 2 ? fallback : sourcePoints;
+    return sourcePoints.filter(point => isFiniteLatLng(point) && !isInsideNoFlyZone(point, noFlyZones));
 }
 
-function createRandomOrders(count: number, mapConfig: MapConfig | null): DraftOrder[] {
+function fallbackOrderPair(mapConfig: MapConfig | null, dynamicNoFlyZones: DynamicNoFlyZone[] = []) {
+    const points = safeDemoPoints(mapConfig, dynamicNoFlyZones).filter(isFiniteLatLng);
+    const eligiblePairs: Array<[LatLng, LatLng]> = [];
+    points.forEach((pickup, pickupIndex) => {
+        points.forEach((dropoff, dropoffIndex) => {
+            if (pickupIndex !== dropoffIndex && distanceMeters(pickup, dropoff) >= MIN_PICKUP_DROPOFF_DISTANCE_METERS) {
+                eligiblePairs.push([pickup, dropoff]);
+            }
+        });
+    });
+    if (eligiblePairs.length === 0) return null;
+    return eligiblePairs[randomIndex(eligiblePairs.length)];
+}
+
+function createRandomOrders(
+    count: number,
+    mapConfig: MapConfig | null,
+    dynamicNoFlyZones: DynamicNoFlyZone[] = []
+): DraftOrder[] {
     const safeCount = clampOrderCount(count);
     const timestamp = Date.now();
-    const points = safeDemoPoints(mapConfig);
-    return Array.from({ length: safeCount }).map((_, idx) => {
-        const pickupIndex = randomIndex(points.length);
-        let dropoffIndex = randomIndex(points.length);
-        if (dropoffIndex === pickupIndex) {
-            dropoffIndex = (dropoffIndex + 1) % points.length;
+    const bounds = normalizeBounds(mapConfig);
+    const orders: DraftOrder[] = [];
+
+    for (let idx = 0; idx < safeCount; idx += 1) {
+        let pair: [LatLng, LatLng] | null = null;
+        if (bounds) {
+            for (let attempt = 0; attempt < RANDOM_ORDER_MAX_ATTEMPTS; attempt += 1) {
+                const pickup = randomUsablePoint(mapConfig, bounds, dynamicNoFlyZones);
+                const dropoff = randomUsablePoint(mapConfig, bounds, dynamicNoFlyZones);
+                if (
+                    pickup
+                    && dropoff
+                    && distanceMeters(pickup, dropoff) >= MIN_PICKUP_DROPOFF_DISTANCE_METERS
+                ) {
+                    pair = [pickup, dropoff];
+                    break;
+                }
+            }
         }
 
-        return {
+        if (!pair) {
+            pair = fallbackOrderPair(mapConfig, dynamicNoFlyZones);
+        }
+        if (!pair) continue;
+
+        orders.push({
             orderId: `random_order_${timestamp}_${idx + 1}`,
-            pickup: points[pickupIndex],
-            dropoff: points[dropoffIndex],
+            pickup: pair[0],
+            dropoff: pair[1],
             payloadKg: Number((0.5 + Math.random() * 2.5).toFixed(1)),
             priority: randomPriorities[randomIndex(randomPriorities.length)]
-        };
-    });
+        });
+    }
+
+    return orders;
 }
 
 function NumberInput({
@@ -198,6 +354,7 @@ export default function OrderManagementModal({
     draftOrders,
     activeSimId,
     mapConfig,
+    dynamicNoFlyZones = [],
     mapInteractionMode,
     importError,
     isStartingSimulation = false,
@@ -213,7 +370,7 @@ export default function OrderManagementModal({
     onSetMapInteractionMode
 }: OrderManagementModalProps) {
     const [jsonText, setJsonText] = useState('');
-    const [randomCount, setRandomCount] = useState(5);
+    const [randomCount, setRandomCount] = useState(DEFAULT_RANDOM_ORDER_COUNT);
     const [randomHint, setRandomHint] = useState<string | null>(null);
     const [actionFeedback, setActionFeedback] = useState<{ tone: ActionStatusTone; message: string } | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
@@ -364,6 +521,10 @@ export default function OrderManagementModal({
                         <div className="space-y-3">
                             <Section title="Tạo ngẫu nhiên đơn hàng">
                                 <div className="space-y-3">
+                                    <div className="rounded border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">
+                                        <p>Tạo đơn ngẫu nhiên trong vùng bản đồ hiện tại.</p>
+                                        <p className="mt-1">Tối đa {MAX_RANDOM_ORDER_COUNT} đơn/lần.</p>
+                                    </div>
                                     <NumberInput
                                         label="Số đơn hàng"
                                         value={randomCount}
@@ -374,10 +535,25 @@ export default function OrderManagementModal({
                                     <button
                                         data-testid="generate-random-orders"
                                         onClick={() => {
-                                            const orders = createRandomOrders(randomCount, mapConfig);
-                                            onAddDraftOrders(orders);
-                                            setSuccessFeedback(`Đã tạo ${orders.length} đơn ngẫu nhiên.`);
-                                            setRandomHint(`Đã tạo ${orders.length} đơn ngẫu nhiên từ các điểm demo hợp lệ.`);
+                                            const requestedCount = clampOrderCount(randomCount);
+                                            const orders = createRandomOrders(requestedCount, mapConfig, dynamicNoFlyZones);
+                                            if (orders.length > 0) {
+                                                onAddDraftOrders(orders);
+                                            }
+                                            if (orders.length === requestedCount) {
+                                                setSuccessFeedback(`Đã tạo ${orders.length} đơn ngẫu nhiên trong vùng bản đồ hiện tại.`);
+                                                setRandomHint(`Đã tạo ${orders.length} đơn ngẫu nhiên trong vùng bản đồ hiện tại.`);
+                                                return;
+                                            }
+                                            if (orders.length > 0) {
+                                                const message = `Chỉ tạo được ${orders.length}/${requestedCount} đơn do vùng hợp lệ hạn chế/no-fly-zone.`;
+                                                setActionFeedback({ tone: 'warning', message });
+                                                setRandomHint(message);
+                                                return;
+                                            }
+                                            const message = 'Không tạo được đơn ngẫu nhiên trong vùng bản đồ hiện tại. Hãy chọn thủ công hoặc kiểm tra vùng cấm bay.';
+                                            setActionFeedback({ tone: 'warning', message });
+                                            setRandomHint(message);
                                         }}
                                         className="w-full rounded bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700"
                                     >
@@ -399,6 +575,10 @@ export default function OrderManagementModal({
                                 <button
                                     onClick={() => {
                                         const count = importedRowCount();
+                                        if (count > MAX_IMPORT_ORDER_COUNT) {
+                                            setActionFeedback({ tone: 'error', message: `Tối đa ${MAX_IMPORT_ORDER_COUNT} đơn/lần import.` });
+                                            return;
+                                        }
                                         const imported = onImportJson(jsonText);
                                         if (imported) {
                                             setSuccessFeedback(`Đã nạp ${count} đơn vào danh sách nháp.`);

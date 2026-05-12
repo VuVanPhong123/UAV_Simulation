@@ -151,6 +151,31 @@ def main():
         lon, lat = transformer.transform(x, y)
         return [lat, lon]
 
+    def map_bounds_payload():
+        try:
+            graph = world.graph
+            min_x = float(graph.min_x)
+            min_y = float(graph.min_y)
+            max_x = min_x + (int(graph.cols) - 1) * float(graph.resolution)
+            max_y = min_y + (int(graph.rows) - 1) * float(graph.resolution)
+            corners = [
+                (min_x, min_y),
+                (min_x, max_y),
+                (max_x, min_y),
+                (max_x, max_y)
+            ]
+            gps_corners = [transformer.transform(x, y) for x, y in corners]
+            lons = [lon for lon, _lat in gps_corners]
+            lats = [lat for _lon, lat in gps_corners]
+            return {
+                "south": min(lats),
+                "west": min(lons),
+                "north": max(lats),
+                "east": max(lons)
+            }
+        except Exception:
+            return None
+
     def send_config():
         drones = [
             {
@@ -175,6 +200,9 @@ def main():
             "no_fly_zones": config["map"].get("no_fly_zones", []),
             "safeOrderPoints": config["map"].get("safe_order_points", [])
         }
+        bounds = map_bounds_payload()
+        if bounds:
+            payload["bounds"] = bounds
         ws.send(json.dumps({
             "type": "config",
             "simId": current_sim_id(),

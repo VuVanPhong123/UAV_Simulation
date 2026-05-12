@@ -1,8 +1,9 @@
 'use client';
 
-import { Fragment, useMemo } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
-import type { Feature, GeoJsonObject, GeoJsonProperties, Geometry } from 'geojson';
+import { useMapEvents } from 'react-leaflet';
+import type { Feature, FeatureCollection, GeoJsonObject, GeoJsonProperties, Geometry } from 'geojson';
 import type { Layer } from 'leaflet';
 import MapEvents from './MapEvents';
 import MapResizeController from './MapResizeController';
@@ -38,6 +39,8 @@ const Pane = dynamic(() => import('react-leaflet').then(mod => mod.Pane), { ssr:
 const MAX_WIND_SHADOW_POINTS = 400;
 const MAX_RENDERED_PLANNED_PATH_POINTS = 250;
 const MAX_RENDERED_HISTORY_POINTS = 200;
+const BUILDING_LABEL_ZOOM_THRESHOLD = 17;
+const MAX_BUILDING_LABELS = 250;
 
 type UavMapProps = {
     buildings: GeoJsonObject | null;
@@ -65,6 +68,26 @@ type UavMapProps = {
 };
 
 const HIDDEN_ORDER_MARKER_STATUSES = new Set(['completed', 'failed', 'canceled']);
+
+function MapZoomObserver({ onZoomChange }: { onZoomChange: (zoom: number) => void }) {
+    const map = useMapEvents({
+        zoomend() {
+            onZoomChange(map.getZoom());
+        }
+    });
+
+    useEffect(() => {
+        onZoomChange(map.getZoom());
+    }, [map, onZoomChange]);
+
+    return null;
+}
+
+function buildingHeight(feature: Feature<Geometry, GeoJsonProperties>) {
+    const value = feature.properties?.estimated_height;
+    const height = typeof value === 'number' ? value : Number(value);
+    return Number.isFinite(height) && height > 0 ? height : null;
+}
 
 function samplePolylinePositions(points: LatLng[], maxPoints: number) {
     if (points.length <= maxPoints) return points;
@@ -100,6 +123,8 @@ export default function UavMap({
     const depot = mapConfig?.depot ?? mapConfig?.start ?? defaultCenter;
     const hasFixedGoal = mapConfig?.hasFixedGoal !== false && mapConfig?.simulationMode !== 'order_dispatch';
     const mapCenter = mapConfig ? depot : defaultCenter;
+    const [currentZoom, setCurrentZoom] = useState(BUILDING_LABEL_ZOOM_THRESHOLD);
+    const showBuildingLabels = layers.buildingLabels && currentZoom >= BUILDING_LABEL_ZOOM_THRESHOLD;
     const selectedDrone = selectedDroneId ? drones[selectedDroneId] : null;
     const sampledZones = useMemo(() => {
         if (!layers.windShadow) return [];
@@ -116,6 +141,29 @@ export default function UavMap({
         [selectedPathHistory]
     );
     const selectedMission = selectedMissionId ? missions[selectedMissionId] ?? null : null;
+    const buildingData = useMemo(() => {
+        if (!buildings || !showBuildingLabels || buildings.type !== 'FeatureCollection') return buildings;
+        const featureCollection = buildings as FeatureCollection<Geometry, GeoJsonProperties>;
+        const allowed = new Set(
+            featureCollection.features
+                .map((feature, idx) => ({ idx, height: buildingHeight(feature as Feature<Geometry, GeoJsonProperties>) }))
+                .filter(item => item.height !== null)
+                .sort((a, b) => (b.height ?? 0) - (a.height ?? 0))
+                .slice(0, MAX_BUILDING_LABELS)
+                .map(item => item.idx)
+        );
+
+        return {
+            ...featureCollection,
+            features: featureCollection.features.map((feature, idx) => ({
+                ...feature,
+                properties: {
+                    ...(feature.properties ?? {}),
+                    __showHeightLabel: allowed.has(idx)
+                }
+            }))
+        } satisfies FeatureCollection<Geometry, GeoJsonProperties>;
+    }, [buildings, showBuildingLabels]);
     const selectedMissionOrderId = selectedMission?.orderId ?? selectedMission?.order_id ?? null;
     const visibleOrderIds = useMemo(() => {
         const ids = new Set<string>();
@@ -169,6 +217,13 @@ export default function UavMap({
                     Không tải được lớp tòa nhà.
                 </div>
             )}
+            {layers.buildingLabels && layers.buildings && buildingLoadStatus !== 'loading' && (
+                <div className="pointer-events-none absolute right-4 top-16 z-[500] max-w-xs rounded border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 shadow-sm">
+                    {showBuildingLabels
+                        ? `Đang hiển thị tối đa ${MAX_BUILDING_LABELS} nhãn độ cao.`
+                        : `Phóng to zoom >= ${BUILDING_LABEL_ZOOM_THRESHOLD} để xem nhãn độ cao tòa nhà.`}
+                </div>
+            )}
             <MapContainer
                 key={`map-${mapConfig?.mapId ?? 'hanoi_my_dinh_me_tri'}`}
                 center={mapCenter}
@@ -186,6 +241,7 @@ export default function UavMap({
                 className="h-full w-full z-10"
             >
                 <MapResizeController resizeKey={resizeKey} />
+                <MapZoomObserver onZoomChange={setCurrentZoom} />
                 <MapEvents onMapClick={onMapClick} />
                 <TileLayer
                     url="https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png"
@@ -204,18 +260,20 @@ export default function UavMap({
                 <Pane name="uavSensorPane" style={{ zIndex: 690, pointerEvents: 'none' }} />
                 <Pane name="uavPane" style={{ zIndex: 700 }} />
 
-                {layers.buildings && buildings && (
+                {layers.buildings && buildingData && (
                     <GeoJSON
-                        key={`buildings-${layers.buildingLabels ? 'labels' : 'plain'}`}
-                        data={buildings}
+                        key={`buildings-${showBuildingLabels ? 'labels' : 'plain'}-${currentZoom >= BUILDING_LABEL_ZOOM_THRESHOLD ? 'zoomed' : 'far'}`}
+                        data={buildingData}
                         filter={(feature: Feature<Geometry, GeoJsonProperties>) => {
                             const geometryType = feature.geometry?.type;
                             return geometryType === 'Polygon' || geometryType === 'MultiPolygon';
                         }}
                         style={() => ({ color: '#94a3b8', weight: 1, fillColor: '#e2e8f0', fillOpacity: 0.6 })}
                         onEachFeature={(feature: Feature<Geometry, GeoJsonProperties>, layer: Layer) => {
-                            if (layers.buildingLabels && feature.properties?.estimated_height) {
-                                layer.bindTooltip(`${feature.properties.estimated_height}m`, {
+                            if (showBuildingLabels && feature.properties?.__showHeightLabel) {
+                                const height = buildingHeight(feature);
+                                if (!height) return;
+                                layer.bindTooltip(`${height}m`, {
                                     permanent: true,
                                     direction: 'center',
                                     className: 'building-label'

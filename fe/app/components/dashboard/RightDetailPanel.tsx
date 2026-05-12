@@ -279,6 +279,7 @@ export default function RightDetailPanel(props: RightDetailPanelProps) {
                     draftOrders={props.draftOrders}
                     activeSimId={props.activeSimId}
                     mapConfig={props.mapConfig}
+                    dynamicNoFlyZones={props.dynamicNoFlyZones}
                     mapInteractionMode={props.mapInteractionMode}
                     importError={props.importError}
                     isStartingSimulation={props.isStartingSimulation}
@@ -463,6 +464,7 @@ export default function RightDetailPanel(props: RightDetailPanelProps) {
             draftOrders={props.draftOrders}
             activeSimId={props.activeSimId}
             mapConfig={props.mapConfig}
+            dynamicNoFlyZones={props.dynamicNoFlyZones}
             mapInteractionMode={props.mapInteractionMode}
             importError={props.importError}
             isStartingSimulation={props.isStartingSimulation}

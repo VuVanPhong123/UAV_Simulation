@@ -38,8 +38,21 @@ export default function LayerTogglePanel({
             <div className="mt-3 space-y-2">
                 {labels.map(([key, label]) => (
                     <label key={key} className="flex cursor-pointer items-center justify-between gap-3 rounded border border-slate-100 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700">
-                        <span>{label}</span>
-                        <input className="cursor-pointer" type="checkbox" checked={layers[key]} onChange={() => onToggle(key)} />
+                        <span className="min-w-0">
+                            <span className="block">{label}</span>
+                            {key === 'buildingLabels' && (
+                                <span className="mt-0.5 block text-[11px] font-semibold text-slate-500">
+                                    Hiển thị khi zoom &gt;= 17, tối đa 250 nhãn.
+                                </span>
+                            )}
+                        </span>
+                        <input
+                            data-testid={key === 'buildingLabels' ? 'toggle-building-labels' : undefined}
+                            className="cursor-pointer"
+                            type="checkbox"
+                            checked={layers[key]}
+                            onChange={() => onToggle(key)}
+                        />
                     </label>
                 ))}
             </div>

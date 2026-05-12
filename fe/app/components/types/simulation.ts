@@ -2,6 +2,13 @@
 
 export type LatLng = [number, number];
 
+export type MapBounds = {
+    south: number;
+    west: number;
+    north: number;
+    east: number;
+};
+
 export const DEFAULT_DEMO_DRONE_COUNT = 5;
 export const MAX_DEMO_DRONE_COUNT = 15;
 
@@ -53,6 +60,7 @@ export type MapConfig = {
     mapId?: string;
     mapLabel?: string;
     buildingGeoJsonUrl?: string;
+    bounds?: MapBounds;
     start: LatLng;
     goal: LatLng;
     depot?: LatLng;

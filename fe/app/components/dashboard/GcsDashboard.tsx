@@ -36,6 +36,7 @@ type NoFlyZoneConfig = {
 type BuildingLoadStatus = 'idle' | 'loading' | 'success' | 'error';
 
 const SUCCESS_CLEAR_MS = 2800;
+const MAX_IMPORT_ORDER_COUNT = 200;
 
 function createDraftOrder(): DraftOrder {
     return {
@@ -276,6 +277,9 @@ export default function GcsDashboard() {
         try {
             const parsed = JSON.parse(text);
             const rows = Array.isArray(parsed) ? parsed : [parsed];
+            if (rows.length > MAX_IMPORT_ORDER_COUNT) {
+                throw new Error(`Tối đa ${MAX_IMPORT_ORDER_COUNT} đơn/lần import.`);
+            }
             const imported = rows.map((item, idx) => {
                 const pickup = Array.isArray(item.pickup) && item.pickup.length === 2 ? [Number(item.pickup[0]), Number(item.pickup[1])] as LatLng : null;
                 const dropoff = Array.isArray(item.dropoff) && item.dropoff.length === 2 ? [Number(item.dropoff[0]), Number(item.dropoff[1])] as LatLng : null;
