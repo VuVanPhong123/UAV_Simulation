@@ -1,7 +1,7 @@
 'use client';
 
 import { translateServerStatus, translateSimulationStatus, translateWorkerStatus } from '../utils/labels';
-import type { DronesById, OrdersById, ServerStatus, SimulationStatus, WorkerStatus } from '../types/simulation';
+import type { DronesById, OrdersById, ServerStatus, SimulationShardInfo, SimulationStatus, WorkersById, WorkerStatus } from '../types/simulation';
 
 type TopStatusBarProps = {
     serverStatus: ServerStatus;
@@ -13,6 +13,9 @@ type TopStatusBarProps = {
     droneCount: number;
     drones: DronesById;
     orders: OrdersById;
+    workers?: WorkersById;
+    simulationShards?: SimulationShardInfo[];
+    isShardedSimulation?: boolean;
 };
 
 function StatusPill({ label, value, toneValue = value, testId }: { label: string; value: string; toneValue?: string; testId?: string }) {
@@ -38,7 +41,10 @@ export default function TopStatusBar({
     simulationStatus,
     droneCount,
     drones,
-    orders
+    orders,
+    workers = {},
+    simulationShards = [],
+    isShardedSimulation = false
 }: TopStatusBarProps) {
     const orderRows = Object.values(orders);
     const droneRows = Object.values(drones);
@@ -49,6 +55,9 @@ export default function TopStatusBar({
     const idleDrones = droneRows.length
         ? droneRows.filter(drone => drone.status === 'idle' && !drone.currentOrderId && !drone.currentMissionId).length
         : totalDrones;
+    const workerRows = Object.values(workers);
+    const activeWorkers = workerRows.filter(worker => worker.status === 'busy' || worker.simId).length;
+    const totalWorkers = workerRows.length;
 
     return (
         <div className="flex min-h-16 items-center justify-between gap-4 border-b border-slate-200 bg-white px-4">
@@ -59,6 +68,12 @@ export default function TopStatusBar({
             <div className="flex flex-wrap items-center justify-end gap-2">
                 <StatusPill label="Máy chủ" value={translateServerStatus(serverStatus)} toneValue={serverStatus} />
                 <StatusPill label="Bộ xử lý" value={translateWorkerStatus(workerStatus)} toneValue={workerStatus} />
+                {totalWorkers > 0 && (
+                    <StatusPill label="Worker" value={`${activeWorkers}/${totalWorkers}`} toneValue={activeWorkers > 0 ? 'busy' : 'idle'} />
+                )}
+                {isShardedSimulation && (
+                    <StatusPill label="Shard" value={`${simulationShards.length} shard`} toneValue="running" />
+                )}
                 <StatusPill label="Mô phỏng" value={translateSimulationStatus(simulationStatus)} toneValue={simulationStatus} testId="simulation-status" />
                 <StatusPill label="Tổng UAV" value={String(totalDrones)} />
                 <StatusPill label="UAV rảnh" value={String(idleDrones)} toneValue="idle" />

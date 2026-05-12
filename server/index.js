@@ -45,20 +45,106 @@ function getWorkerStatus() {
     return 'disconnected';
 }
 
+function workerCapacity(workerWs) {
+    const meta = getClientMeta(workerWs) || {};
+    const value = Number(meta.maxDrones);
+    return Number.isFinite(value) && value > 0 ? Math.floor(value) : 15;
+}
+
+function publicWorkerInfo(workerId, workerWs) {
+    const meta = workerWs ? getClientMeta(workerWs) : null;
+    return {
+        workerId,
+        workerName: meta?.workerName ?? workerId,
+        status: meta?.status ?? 'unknown',
+        simId: meta?.simId ?? null,
+        shardId: meta?.shardId ?? null,
+        maxDrones: Number.isFinite(Number(meta?.maxDrones)) ? Number(meta.maxDrones) : null,
+        supportsSharding: meta?.supportsSharding !== false,
+        currentMapId: meta?.currentMapId ?? null
+    };
+}
+
+function broadcastWorkerList() {
+    broadcastToFrontends({
+        type: 'worker_list',
+        timestamp: nowMs(),
+        payload: {
+            workers: [...workers.entries()].map(([workerId, workerWs]) => publicWorkerInfo(workerId, workerWs))
+        }
+    });
+}
+
 function broadcastToFrontends(payload) {
     for (const frontendWs of frontends.values()) {
         safeSend(frontendWs, payload);
     }
 }
 
-function findIdleWorker() {
-    for (const [workerId, workerWs] of workers.entries()) {
-        const meta = getClientMeta(workerWs);
-        if (meta?.status === 'idle') {
-            return { workerId, workerWs };
-        }
+function getIdleWorkers() {
+    return [...workers.entries()]
+        .map(([workerId, workerWs]) => ({ workerId, workerWs, meta: getClientMeta(workerWs) }))
+        .filter(item => item.meta?.status === 'idle');
+}
+
+function splitOrdersForShard(orderBatch, shardIndex, shardCount) {
+    const rows = Array.isArray(orderBatch)
+        ? orderBatch
+        : Array.isArray(orderBatch?.orders)
+            ? orderBatch.orders
+            : [];
+    return rows.filter((_, idx) => idx % shardCount === shardIndex);
+}
+
+function shardPublicInfo(shard) {
+    return {
+        shardId: shard.shardId,
+        shardIndex: shard.shardIndex,
+        shardCount: shard.shardCount,
+        workerId: shard.workerId,
+        droneCount: shard.droneCount,
+        droneIdOffset: shard.droneIdOffset,
+        startDroneId: shard.startDroneId,
+        endDroneId: shard.endDroneId
+    };
+}
+
+function buildShardAssignments(simId, requestedDroneCount, orderBatch) {
+    const idle = getIdleWorkers().filter(item => item.meta?.supportsSharding !== false);
+    let remaining = requestedDroneCount;
+    let offset = 0;
+    const shards = [];
+
+    for (const item of idle) {
+        if (remaining <= 0) break;
+        const cap = workerCapacity(item.workerWs);
+        const count = Math.min(cap, remaining);
+        if (count <= 0) continue;
+
+        shards.push({
+            shardId: `${simId}_shard_${shards.length}`,
+            shardIndex: shards.length,
+            workerId: item.workerId,
+            workerWs: item.workerWs,
+            droneCount: count,
+            droneIdOffset: offset,
+            startDroneId: `drone_${offset + 1}`,
+            endDroneId: `drone_${offset + count}`,
+            orderBatch: []
+        });
+
+        offset += count;
+        remaining -= count;
     }
-    return null;
+
+    if (remaining > 0) return null;
+
+    const shardCount = shards.length;
+    shards.forEach((shard, idx) => {
+        shard.shardCount = shardCount;
+        shard.orderBatch = splitOrdersForShard(orderBatch, idx, shardCount);
+    });
+    return shards;
 }
 
 function sendBrokerEventToFrontend(frontendWs, level, code, message, simId = null) {
@@ -83,6 +169,7 @@ function markWorkerStatus(workerId, status) {
             status: 'disconnected',
             timestamp: nowMs()
         });
+        broadcastWorkerList();
         return;
     }
 
@@ -94,9 +181,15 @@ function markWorkerStatus(workerId, status) {
     broadcastToFrontends({
         type: 'worker_status',
         workerId,
+        workerName: meta?.workerName ?? workerId,
         status,
+        simId: meta?.simId ?? null,
+        shardId: meta?.shardId ?? null,
+        maxDrones: Number.isFinite(Number(meta?.maxDrones)) ? Number(meta.maxDrones) : null,
+        supportsSharding: meta?.supportsSharding !== false,
         timestamp: nowMs()
     });
+    broadcastWorkerList();
 }
 
 function sendConnectionState(frontendWs) {
@@ -109,6 +202,13 @@ function sendConnectionState(frontendWs) {
         workerStatus: getWorkerStatus(),
         activeSimId: activeSim?.simId ?? null,
         timestamp: nowMs()
+    });
+    safeSend(frontendWs, {
+        type: 'worker_list',
+        timestamp: nowMs(),
+        payload: {
+            workers: [...workers.entries()].map(([workerId, workerWs]) => publicWorkerInfo(workerId, workerWs))
+        }
     });
 }
 
@@ -138,11 +238,22 @@ function registerClient(ws, data) {
 
     if (data.role === 'worker') {
         const workerId = `worker_${workerSeq++}`;
+        const metadata = data.metadata || {};
+        const rawMaxDrones = Number(metadata.maxDrones ?? data.maxDrones);
         Object.assign(meta, {
             id: workerId,
             role: 'worker',
             status: 'idle',
-            simId: null
+            simId: null,
+            shardId: null,
+            workerName: metadata.workerName ?? data.workerName ?? workerId,
+            maxDrones: Number.isFinite(rawMaxDrones) && rawMaxDrones > 0 ? Math.floor(rawMaxDrones) : 15,
+            supportsSharding: metadata.supportsSharding !== false,
+            supportsCustomMap: Boolean(metadata.supportsCustomMap),
+            capabilities: Array.isArray(metadata.capabilities) ? metadata.capabilities : [],
+            currentMapId: metadata.currentMapId ?? null,
+            connectedAt: nowMs(),
+            pid: metadata.pid ?? null
         });
         workers.set(workerId, ws);
 
@@ -151,6 +262,7 @@ function registerClient(ws, data) {
             role: 'worker',
             clientId: workerId,
             status: 'idle',
+            workerName: meta.workerName,
             timestamp: nowMs()
         });
         markWorkerStatus(workerId, 'idle');
@@ -176,59 +288,87 @@ function requestStartSimulation(ws, data) {
         return;
     }
 
-    const idleWorker = findIdleWorker();
-    if (!idleWorker) {
+    const payload = data.payload ?? {};
+    const requestedDroneCountRaw = Number(payload.droneCount ?? payload.drone_count ?? 1);
+    const requestedDroneCount = Number.isFinite(requestedDroneCountRaw)
+        ? Math.max(1, Math.min(100000, Math.floor(requestedDroneCountRaw)))
+        : 1;
+    const startupOrders = payload.orderBatch ?? payload.order_batch ?? payload.orders;
+    const simId = `sim_${simSeq++}`;
+    const shards = buildShardAssignments(simId, requestedDroneCount, startupOrders);
+    if (!shards) {
         safeSend(ws, {
             type: 'worker_busy',
-            message: 'Không có worker rảnh để chạy simulation.',
+            message: `Khong du worker ranh de chay ${requestedDroneCount} UAV. Hay bat them worker local.`,
             timestamp: nowMs()
         });
         return;
     }
 
-    const simId = `sim_${simSeq++}`;
     const simulation = {
         simId,
         frontendId: frontendMeta.id,
-        workerId: idleWorker.workerId,
+        workerId: shards[0]?.workerId ?? null,
+        workerIds: shards.map(shard => shard.workerId),
+        shards: shards.map(shardPublicInfo),
         status: 'running',
         createdAt: nowMs(),
-        finishedNotified: false
+        finishedNotified: false,
+        configForwarded: false,
+        shardFinished: {},
+        shardStatuses: {}
     };
     simulations.set(simId, simulation);
 
     frontendMeta.simId = simId;
     frontendMeta.status = 'busy';
 
-    const workerMeta = getClientMeta(idleWorker.workerWs);
-    if (workerMeta) {
-        workerMeta.simId = simId;
-        workerMeta.status = 'busy';
+    for (const shard of shards) {
+        const workerMeta = getClientMeta(shard.workerWs);
+        if (workerMeta) {
+            workerMeta.simId = simId;
+            workerMeta.shardId = shard.shardId;
+            workerMeta.status = 'busy';
+        }
     }
 
     safeSend(ws, {
         type: 'simulation_assigned',
         simId,
-        workerId: idleWorker.workerId,
+        workerId: shards[0]?.workerId ?? null,
+        workerIds: shards.map(shard => shard.workerId),
+        shards: shards.map(shardPublicInfo),
+        totalDrones: requestedDroneCount,
+        sharded: shards.length > 1,
         status: 'running',
         timestamp: nowMs()
     });
 
-    const startPayload = {
-        droneCount: 1,
-        ...(data.payload ?? {}),
-        mapId: 'hanoi_my_dinh_me_tri_large'
-    };
-
-    safeSend(idleWorker.workerWs, {
-        type: 'start_simulation',
-        simId,
-        frontendId: frontendMeta.id,
-        payload: startPayload
-    });
-
-    markWorkerStatus(idleWorker.workerId, 'busy');
-    console.log(`[Broker] assigned ${simId}: ${frontendMeta.id} -> ${idleWorker.workerId}`);
+    for (const shard of shards) {
+        safeSend(shard.workerWs, {
+            type: 'start_simulation',
+            simId,
+            frontendId: frontendMeta.id,
+            payload: {
+                ...payload,
+                mapId: payload.mapId || 'hanoi_my_dinh_me_tri_large',
+                droneCount: shard.droneCount,
+                globalDroneCount: requestedDroneCount,
+                orderBatch: shard.orderBatch,
+                autoDispatch: payload.autoDispatch ?? true,
+                simulationMode: payload.simulationMode || 'order_dispatch',
+                shardMode: true,
+                shardId: shard.shardId,
+                shardIndex: shard.shardIndex,
+                shardCount: shard.shardCount,
+                droneIdOffset: shard.droneIdOffset,
+                workerDroneCapacity: workerCapacity(shard.workerWs),
+                altitudeBandIndex: shard.shardIndex
+            }
+        });
+        markWorkerStatus(shard.workerId, 'busy');
+    }
+    console.log(`[Broker] assigned ${simId}: ${frontendMeta.id} -> ${shards.map(shard => shard.workerId).join(', ')}`);
 }
 
 function routeFrontendMessage(ws, data) {
@@ -241,24 +381,53 @@ function routeFrontendMessage(ws, data) {
         return;
     }
 
-    const workerWs = workers.get(simulation.workerId);
-    if (!workerWs || workerWs.readyState !== WebSocket.OPEN) {
-        sendBrokerEventToFrontend(ws, 'error', 'WORKER_DISCONNECTED', 'Worker disconnected.', simId);
-        simulation.status = 'failed';
+    const workerIds = simulation.workerIds || [simulation.workerId].filter(Boolean);
+    const shardCount = simulation.shards?.length || workerIds.length || 1;
+
+    if (data.type === 'order_batch') {
+        for (const shard of simulation.shards || []) {
+            const workerWs = workers.get(shard.workerId);
+            if (!workerWs || workerWs.readyState !== WebSocket.OPEN) {
+                sendBrokerEventToFrontend(ws, 'error', 'WORKER_DISCONNECTED', 'Worker disconnected.', simId);
+                finishSimulation(simulation, 'failed');
+                return;
+            }
+            safeSend(workerWs, {
+                ...data,
+                payload: {
+                    ...(data.payload || {}),
+                    orders: splitOrdersForShard(data.payload?.orders ?? data.payload?.orderBatch ?? data.payload, shard.shardIndex, shardCount),
+                    autoDispatch: data.payload?.autoDispatch ?? true
+                }
+            });
+        }
         return;
     }
 
-    safeSend(workerWs, data);
+    for (const workerId of workerIds) {
+        const workerWs = workers.get(workerId);
+        if (!workerWs || workerWs.readyState !== WebSocket.OPEN) {
+            sendBrokerEventToFrontend(ws, 'error', 'WORKER_DISCONNECTED', 'Worker disconnected.', simId);
+            finishSimulation(simulation, 'failed');
+            return;
+        }
+        safeSend(workerWs, data);
+    }
 }
 
 function finishSimulation(simulation, status, notifyFrontend = true) {
     simulation.status = ['success', 'stopped'].includes(status) ? 'stopped' : 'failed';
 
-    const workerWs = workers.get(simulation.workerId);
-    const workerMeta = workerWs ? getClientMeta(workerWs) : null;
-    if (workerMeta) {
-        workerMeta.status = 'idle';
-        workerMeta.simId = null;
+    const workerIds = simulation.workerIds || [simulation.workerId].filter(Boolean);
+    for (const workerId of workerIds) {
+        const workerWs = workers.get(workerId);
+        const workerMeta = workerWs ? getClientMeta(workerWs) : null;
+        if (workerMeta) {
+            workerMeta.status = 'idle';
+            workerMeta.simId = null;
+            workerMeta.shardId = null;
+        }
+        markWorkerStatus(workerId, workerWs ? 'idle' : 'disconnected');
     }
 
     const frontendWs = frontends.get(simulation.frontendId);
@@ -267,8 +436,6 @@ function finishSimulation(simulation, status, notifyFrontend = true) {
         frontendMeta.status = 'idle';
         frontendMeta.simId = null;
     }
-
-    markWorkerStatus(simulation.workerId, workerWs ? 'idle' : 'disconnected');
 
     if (notifyFrontend && frontendWs && !simulation.finishedNotified) {
         simulation.finishedNotified = true;
@@ -288,7 +455,8 @@ function routeWorkerMessage(ws, data) {
     const simId = data.simId ?? workerMeta?.simId;
     const simulation = simId ? simulations.get(simId) : null;
 
-    if (!simulation || simulation.workerId !== workerMeta?.id) {
+    const workerIds = simulation?.workerIds || [simulation?.workerId].filter(Boolean);
+    if (!simulation || !workerIds.includes(workerMeta?.id)) {
         console.warn('[Broker] dropped worker message with invalid simId:', data.type, simId);
         return;
     }
@@ -299,20 +467,50 @@ function routeWorkerMessage(ws, data) {
         return;
     }
 
-    safeSend(frontendWs, data);
+    data.workerId = workerMeta.id;
+    data.workerName = workerMeta.workerName;
+    data.shardId = data.shardId || workerMeta.shardId || null;
+
+    if (data.type === 'config') {
+        if (simulation.configForwarded) return;
+        simulation.configForwarded = true;
+        const totalDrones = (simulation.shards || []).reduce((sum, shard) => sum + Number(shard.droneCount || 0), 0);
+        data.payload = {
+            ...(data.payload || {}),
+            droneCount: totalDrones || data.payload?.droneCount,
+            globalDroneCount: totalDrones || data.payload?.globalDroneCount,
+            sharded: (simulation.shards?.length || 0) > 1,
+            shards: simulation.shards || []
+        };
+        data.droneCount = data.payload.droneCount;
+        data.globalDroneCount = data.payload.globalDroneCount;
+        data.sharded = (simulation.shards?.length || 0) > 1;
+        data.shards = simulation.shards || [];
+    }
 
     if (data.type === 'worker_status') {
         const status = data.status ?? data.payload?.status;
         if (status) markWorkerStatus(workerMeta.id, status);
+        safeSend(frontendWs, data);
         return;
     }
 
     if (data.type === 'simulation_finished') {
         const status = data.payload?.status ?? 'stopped';
-        simulation.finishedNotified = true;
-        finishSimulation(simulation, status, false);
+        simulation.shardFinished[workerMeta.id] = true;
+        simulation.shardStatuses[workerMeta.id] = status;
+        if (status === 'failed' || status === 'truncated') {
+            finishSimulation(simulation, 'failed');
+            return;
+        }
+        const allDone = workerIds.every(workerId => simulation.shardFinished[workerId]);
+        if (allDone) {
+            finishSimulation(simulation, status);
+        }
         return;
     }
+
+    safeSend(frontendWs, data);
 
     if (data.type === 'event') {
         return;
@@ -398,26 +596,15 @@ function handleClose(ws) {
 
     if (meta.role === 'worker') {
         const workerId = meta.id;
-        const activeSim = meta.simId ? simulations.get(meta.simId) : null;
+        const activeSim = meta.simId
+            ? simulations.get(meta.simId)
+            : [...simulations.values()].find(sim => (sim.workerIds || [sim.workerId]).includes(workerId) && sim.status === 'running');
         if (activeSim) {
-            activeSim.status = 'failed';
             const frontendWs = frontends.get(activeSim.frontendId);
-            const frontendMeta = frontendWs ? getClientMeta(frontendWs) : null;
-            if (frontendMeta) {
-                frontendMeta.status = 'idle';
-                frontendMeta.simId = null;
-            }
             if (frontendWs) {
                 sendBrokerEventToFrontend(frontendWs, 'error', 'WORKER_DISCONNECTED', 'Worker disconnected.', activeSim.simId);
-                safeSend(frontendWs, {
-                    type: 'simulation_finished',
-                    simId: activeSim.simId,
-                    timestamp: nowMs(),
-                    payload: {
-                        status: 'failed'
-                    }
-                });
             }
+            finishSimulation(activeSim, 'failed');
         }
         workers.delete(workerId);
         broadcastToFrontends({
@@ -426,14 +613,16 @@ function handleClose(ws) {
             status: 'disconnected',
             timestamp: nowMs()
         });
+        broadcastWorkerList();
         console.log(`[Broker] worker disconnected: ${workerId}`);
     } else if (meta.role === 'frontend') {
         const frontendId = meta.id;
         const activeSim = meta.simId ? simulations.get(meta.simId) : null;
         if (activeSim) {
             activeSim.status = 'stopped';
-            const workerWs = workers.get(activeSim.workerId);
-            if (workerWs) {
+            for (const workerId of activeSim.workerIds || [activeSim.workerId].filter(Boolean)) {
+                const workerWs = workers.get(workerId);
+                if (!workerWs) continue;
                 safeSend(workerWs, {
                     type: 'command',
                     simId: activeSim.simId,
@@ -443,8 +632,9 @@ function handleClose(ws) {
                 if (workerMeta) {
                     workerMeta.status = 'idle';
                     workerMeta.simId = null;
+                    workerMeta.shardId = null;
                 }
-                markWorkerStatus(activeSim.workerId, 'idle');
+                markWorkerStatus(workerId, 'idle');
             }
         }
         frontends.delete(frontendId);

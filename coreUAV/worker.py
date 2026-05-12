@@ -1,6 +1,7 @@
 import copy
 import json
 import math
+import os
 import time
 
 import websocket
@@ -43,6 +44,11 @@ def clamp_int(value, minimum, maximum, fallback):
     return max(minimum, min(maximum, parsed))
 
 
+WORKER_NAME = os.getenv("WORKER_NAME", f"local-worker-{os.getpid()}")
+WORKER_MAX_DRONES = clamp_int(os.getenv("WORKER_MAX_DRONES"), 1, DEFAULT_MAX_DEMO_DRONES, DEFAULT_MAX_DEMO_DRONES)
+WORKER_SUPPORTS_SHARDING = parse_bool(os.getenv("WORKER_SUPPORTS_SHARDING", "true"))
+
+
 def sample_evenly(items, max_points):
     if max_points <= 0 or len(items) <= max_points:
         return items
@@ -81,7 +87,17 @@ def main():
     ws.settimeout(0.01)
     ws.send(json.dumps({
         "type": "register",
-        "role": "worker"
+        "role": "worker",
+        "workerName": WORKER_NAME,
+        "metadata": {
+            "workerName": WORKER_NAME,
+            "capabilities": ["simulation", "order_dispatch", "large_map", "sharded_simulation"],
+            "maxDrones": WORKER_MAX_DRONES,
+            "supportsSharding": WORKER_SUPPORTS_SHARDING,
+            "supportsCustomMap": False,
+            "currentMapId": DEFAULT_MAP_ID,
+            "pid": os.getpid()
+        }
     }))
     print("Da ket noi va gui register worker!")
 
@@ -95,6 +111,7 @@ def main():
         DEFAULT_MAX_DEMO_DRONES,
         DEFAULT_MAX_DEMO_DRONES
     )
+    max_demo_drones = min(max_demo_drones, WORKER_MAX_DRONES)
     default_demo_drones = clamp_int(
         performance_config.get("default_demo_drones"),
         1,
@@ -122,6 +139,12 @@ def main():
     step = 0
     telemetry_counter = 0
     drone_count = 1
+    shard_mode = False
+    shard_id = None
+    shard_index = 0
+    shard_count = 1
+    drone_id_offset = 0
+    global_drone_count = 1
     last_path_ids = {}
     dt = config["simulation"]["time_step"]
     wind_shadow_requested = send_wind_shadow_by_default
@@ -129,8 +152,25 @@ def main():
     def current_sim_id():
         return sim_id
 
+    def shard_metadata():
+        if not shard_mode:
+            return {}
+        return {
+            "shardId": shard_id,
+            "shardIndex": shard_index,
+            "shardCount": shard_count,
+            "globalDroneCount": global_drone_count,
+            "workerId": WORKER_NAME,
+            "workerName": WORKER_NAME
+        }
+
+    def send_json(payload):
+        message = dict(payload)
+        message.update(shard_metadata())
+        ws.send(json.dumps(message))
+
     def send_event(level, code, message, drone_id=SYSTEM_DRONE_ID):
-        ws.send(json.dumps({
+        send_json({
             "type": "event",
             "simId": current_sim_id(),
             "droneId": drone_id,
@@ -141,17 +181,18 @@ def main():
                 "code": code,
                 "message": message
             }
-        }))
+        })
 
     def send_worker_status(status):
-        ws.send(json.dumps({
+        send_json({
             "type": "worker_status",
             "simId": current_sim_id(),
+            "status": status,
             "timestamp": now_ms(),
             "payload": {
                 "status": status
             }
-        }))
+        })
 
     def gps_for_node(node):
         x, y = world.graph.nodes[node]
@@ -210,14 +251,14 @@ def main():
         bounds = map_bounds_payload()
         if bounds:
             payload["bounds"] = bounds
-        ws.send(json.dumps({
+        send_json({
             "type": "config",
             "simId": current_sim_id(),
             "droneId": SYSTEM_DRONE_ID,
             "timestamp": now_ms(),
             "payload": payload,
             **payload
-        }))
+        })
 
     def agent_payload(agent, terminated=False):
         lon, lat = transformer.transform(agent.drone.pos[0], agent.drone.pos[1])
@@ -255,7 +296,7 @@ def main():
 
     def send_telemetry_for_agent(agent, terminated=False):
         payload = agent_payload(agent, terminated)
-        ws.send(json.dumps({
+        send_json({
             "type": "telemetry",
             "simId": current_sim_id(),
             "droneId": agent.drone_id,
@@ -288,7 +329,7 @@ def main():
             "collisionAction": payload["collisionAction"],
             "collisionAvoidanceReason": payload["collisionAvoidanceReason"],
             "terminated": payload["terminated"]
-        }))
+        })
 
     def send_all_telemetry(terminated=False):
         if world is None or transformer is None:
@@ -308,7 +349,7 @@ def main():
             for (x, y) in shadow_utm:
                 lon, lat = transformer.transform(x, y)
                 shadow_gps.append([lat, lon])
-        ws.send(json.dumps({
+        send_json({
             "type": "wind_shadow_zones",
             "simId": current_sim_id(),
             "droneId": SYSTEM_DRONE_ID,
@@ -317,7 +358,7 @@ def main():
                 "zones": shadow_gps
             },
             "zones": shadow_gps
-        }))
+        })
 
     def planned_path_payload(agent):
         def distance_m(a, b):
@@ -358,7 +399,7 @@ def main():
         if not agent.path and not include_empty:
             return
         payload = planned_path_payload(agent)
-        ws.send(json.dumps({
+        send_json({
             "type": "planned_path",
             "simId": current_sim_id(),
             "droneId": agent.drone_id,
@@ -366,7 +407,7 @@ def main():
             "payload": payload,
             "path": payload["path"],
             "path3d": payload["path3d"]
-        }))
+        })
 
     def send_all_planned_paths(include_empty=False):
         if world is None or transformer is None:
@@ -375,7 +416,7 @@ def main():
             send_planned_path_for_agent(agent, include_empty=include_empty)
 
     def send_simulation_finished(status):
-        ws.send(json.dumps({
+        send_json({
             "type": "simulation_finished",
             "simId": current_sim_id(),
             "droneId": SYSTEM_DRONE_ID,
@@ -383,36 +424,36 @@ def main():
             "payload": {
                 "status": status
             }
-        }))
+        })
 
     def send_order_update(order_dict):
-        ws.send(json.dumps({
+        send_json({
             "type": "order_update",
             "simId": current_sim_id(),
             "droneId": SYSTEM_DRONE_ID,
             "timestamp": now_ms(),
             "payload": order_dict
-        }))
+        })
 
     def send_order_state():
         if world is None:
             return
-        ws.send(json.dumps({
+        send_json({
             "type": "order_state",
             "simId": current_sim_id(),
             "droneId": SYSTEM_DRONE_ID,
             "timestamp": now_ms(),
             "payload": world.get_order_state()
-        }))
+        })
 
     def send_mission_update(mission_dict):
-        ws.send(json.dumps({
+        send_json({
             "type": "mission_update",
             "simId": current_sim_id(),
             "droneId": SYSTEM_DRONE_ID,
             "timestamp": now_ms(),
             "payload": mission_dict
-        }))
+        })
 
     def drain_world_events():
         if world is None:
@@ -498,6 +539,13 @@ def main():
                 frontend_id = data.get("frontendId")
                 requested_map_id = payload.get("mapId") or payload.get("map_id")
                 drone_count = clamp_int(payload.get("droneCount"), 1, max_demo_drones, default_demo_drones)
+                shard_mode = parse_bool(payload.get("shardMode", payload.get("shard_mode", False)))
+                shard_id = payload.get("shardId") or payload.get("shard_id")
+                shard_index = clamp_int(payload.get("shardIndex", payload.get("shard_index", 0)), 0, 999, 0)
+                shard_count = clamp_int(payload.get("shardCount", payload.get("shard_count", 1)), 1, 999, 1)
+                drone_id_offset = clamp_int(payload.get("droneIdOffset", payload.get("drone_id_offset", 0)), 0, 100000, 0)
+                global_drone_count = clamp_int(payload.get("globalDroneCount", payload.get("global_drone_count", drone_count)), 1, 100000, drone_count)
+                altitude_band_index = clamp_int(payload.get("altitudeBandIndex", payload.get("altitude_band_index", shard_index)), 0, 10, shard_index)
                 is_assigned = True
                 is_running = False
                 step = 0
@@ -505,6 +553,11 @@ def main():
                 wind_shadow_requested = send_wind_shadow_by_default
 
                 config = config_for_map(base_config, requested_map_id)
+                if shard_mode:
+                    altitude_levels = config.get("performance", {}).get("altitude_levels", [20.0, 35.0, 50.0])
+                    if altitude_levels and config.get("drone") and "normal_altitude" in config["drone"]:
+                        band_altitude = altitude_levels[altitude_band_index % len(altitude_levels)]
+                        config["drone"]["normal_altitude"] = float(band_altitude)
                 dt = config["simulation"]["time_step"]
                 map_id = config.get("map", {}).get("map_id", DEFAULT_MAP_ID)
                 if config.get("performance", {}).get("require_map_cache", False) and not cache_exists(map_id):
@@ -521,7 +574,12 @@ def main():
                     frontend_id = None
                     continue
 
-                world = SimulationWorld(config, drone_count, idle_on_start=True)
+                world = SimulationWorld(
+                    config,
+                    drone_count,
+                    idle_on_start=True,
+                    drone_id_offset=drone_id_offset
+                )
                 transformer = Transformer.from_crs(world.graph.crs_utm, "epsg:4326", always_xy=True)
                 last_path_ids = mark_current_paths()
 
@@ -548,7 +606,7 @@ def main():
                     send_wind_shadow_zones()
                 drain_world_events()
                 is_running = True
-                print(f"Bat dau simulation {sim_id} cho {frontend_id} voi {drone_count} drone")
+                print(f"Bat dau simulation {sim_id} cho {frontend_id} voi {drone_count} drone, shard={shard_id or 'none'}")
 
             elif msg_type == "add_obstacle":
                 if not is_assigned or reject_wrong_sim(data):

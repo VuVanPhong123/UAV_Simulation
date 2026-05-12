@@ -21,7 +21,7 @@ export type MapPresetOption = {
 };
 
 export const DEFAULT_DEMO_DRONE_COUNT = 5;
-export const MAX_DEMO_DRONE_COUNT = 15;
+export const MAX_DEMO_DRONE_COUNT = 30;
 export const DEFAULT_MAP_PRESET_ID: MapPresetId = 'hanoi_my_dinh_me_tri_large';
 
 export const MAP_PRESET_OPTIONS: MapPresetOption[] = [
@@ -39,6 +39,30 @@ export type ServerStatus = 'connecting' | 'connected' | 'disconnected';
 export type WorkerStatus = 'idle' | 'busy' | 'disconnected' | 'error' | 'unknown';
 export type SimulationStatus = 'idle' | 'running' | 'paused' | 'stopped' | 'failed';
 export type AsyncRequestStatus = 'idle' | 'loading' | 'success' | 'warning' | 'error';
+
+export type SimulationShardInfo = {
+    shardId: string;
+    shardIndex: number;
+    shardCount: number;
+    workerId: string;
+    droneCount: number;
+    droneIdOffset: number;
+    startDroneId?: string;
+    endDroneId?: string;
+};
+
+export type WorkerInfo = {
+    workerId: string;
+    workerName?: string;
+    status: WorkerStatus | 'unknown';
+    simId?: string | null;
+    shardId?: string | null;
+    maxDrones?: number | null;
+    supportsSharding?: boolean;
+    currentMapId?: string | null;
+};
+
+export type WorkersById = Record<string, WorkerInfo>;
 
 export type ObstacleType = 'unknown' | 'tree' | 'pole' | 'bird' | 'building_crane';
 
@@ -324,6 +348,16 @@ export type IncomingMessage = {
     simId?: string | null;
     droneId?: string | null;
     workerId?: string;
+    workerIds?: string[];
+    workerName?: string;
+    maxDrones?: number | null;
+    supportsSharding?: boolean;
+    shardId?: string | null;
+    workers?: WorkerInfo[];
+    shards?: SimulationShardInfo[];
+    sharded?: boolean;
+    totalDrones?: number;
+    globalDroneCount?: number;
     status?: string;
     message?: string;
     latencyMs?: number;
@@ -340,6 +374,7 @@ export type IncomingMessage = {
         code?: string;
         message?: string;
         status?: string;
+        workers?: WorkerInfo[];
     };
     pos?: LatLng;
     zones?: LatLng[];

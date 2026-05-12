@@ -522,6 +522,9 @@ export default function GcsDashboard() {
                 droneCount={droneCount}
                 drones={socket.drones}
                 orders={socket.orders}
+                workers={socket.workers}
+                simulationShards={socket.simulationShards}
+                isShardedSimulation={socket.isShardedSimulation}
             />
             <div
                 className="grid min-h-0 flex-1"

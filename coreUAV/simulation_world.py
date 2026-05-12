@@ -63,9 +63,10 @@ class DroneAgent:
 
 
 class SimulationWorld:
-    def __init__(self, config, drone_count=1, idle_on_start=True):
+    def __init__(self, config, drone_count=1, idle_on_start=True, drone_id_offset=0):
         self.config = config
         self.idle_on_start = bool(idle_on_start)
+        self.drone_id_offset = max(0, int(drone_id_offset or 0))
         self.graph = WaypointGraph(config)
         self.time_step = config["simulation"]["time_step"]
         self.max_steps = config["simulation"]["max_steps"]
@@ -126,7 +127,8 @@ class SimulationWorld:
         self.agents = {}
 
         for idx in range(self.drone_count):
-            drone_id = f"drone_{idx + 1}"
+            global_idx = self.drone_id_offset + idx + 1
+            drone_id = f"drone_{global_idx}"
             drone = Drone(self.config)
             start_node = self._find_nearby_clear_node(self.graph.start, idx, drone.normal_altitude)
             goal_node = self._find_nearby_clear_node(self.graph.goal, idx, drone.normal_altitude)

@@ -23,9 +23,12 @@ import type {
     PlannedPath3dByDrone,
     PlannedPathsByDrone,
     ServerStatus,
+    SimulationShardInfo,
     SimulationStatus,
     AsyncRequestStatus,
     WeatherState,
+    WorkerInfo,
+    WorkersById,
     WorkerStatus
 } from '../types/simulation';
 
@@ -187,6 +190,13 @@ function mapMissions(items?: Mission[]) {
     }, {});
 }
 
+function mapWorkers(items?: WorkerInfo[]) {
+    return (items ?? []).reduce<WorkersById>((acc, worker) => {
+        if (worker.workerId) acc[worker.workerId] = worker;
+        return acc;
+    }, {});
+}
+
 export function useSimulationSocket() {
     const wsRef = useRef<WebSocket | null>(null);
     const activeSimIdRef = useRef<string | null>(null);
@@ -194,6 +204,9 @@ export function useSimulationSocket() {
     const plannedPathSignaturesRef = useRef<Record<string, string>>({});
     const [serverStatus, setServerStatus] = useState<ServerStatus>('connecting');
     const [workerStatus, setWorkerStatus] = useState<WorkerStatus>('unknown');
+    const [workers, setWorkers] = useState<WorkersById>({});
+    const [simulationShards, setSimulationShards] = useState<SimulationShardInfo[]>([]);
+    const [isShardedSimulation, setIsShardedSimulation] = useState(false);
     const [simulationStatus, setSimulationStatus] = useState<SimulationStatus>('idle');
     const [activeSimId, setActiveSimId] = useState<string | null>(null);
     const [frontendId, setFrontendId] = useState<string | null>(null);
@@ -279,6 +292,8 @@ export function useSimulationSocket() {
         if (action === 'resume') setSimulationStatus('running');
         if (action === 'stop') {
             setSimulationStatus('stopped');
+            setSimulationShards([]);
+            setIsShardedSimulation(false);
             clearSessionVisuals();
             clearPendingStart();
         }
@@ -299,6 +314,8 @@ export function useSimulationSocket() {
         if (simId) locallyStoppedSimIdsRef.current.add(simId);
         activeSimIdRef.current = null;
         setActiveSimId(null);
+        setSimulationShards([]);
+        setIsShardedSimulation(false);
         setSimulationStatus('stopped');
         clearPendingStart();
         clearSessionVisuals();
@@ -311,7 +328,7 @@ export function useSimulationSocket() {
     const startSimulation = useCallback((input: StartSimulationInput = 1) => {
         const droneCount = clampDroneCount(typeof input === 'number' ? input : input.droneCount);
         const orderBatch = typeof input === 'number' ? undefined : input.orderBatch;
-        const mapId = DEFAULT_MAP_PRESET_ID;
+        const mapId = typeof input === 'number' ? DEFAULT_MAP_PRESET_ID : input.mapId ?? DEFAULT_MAP_PRESET_ID;
         const sent = sendJson({
             type: 'request_start_simulation',
             payload: {
@@ -428,6 +445,8 @@ export function useSimulationSocket() {
                 if (data.activeSimId && locallyStoppedSimIdsRef.current.has(data.activeSimId)) {
                     activeSimIdRef.current = null;
                     setActiveSimId(null);
+                    setSimulationShards([]);
+                    setIsShardedSimulation(false);
                     setSimulationStatus('stopped');
                     clearPendingStart();
                     return;
@@ -437,15 +456,37 @@ export function useSimulationSocket() {
                 setSimulationStatus(data.activeSimId ? 'running' : 'idle');
                 if (!data.activeSimId) {
                     locallyStoppedSimIdsRef.current.clear();
+                    setSimulationShards([]);
+                    setIsShardedSimulation(false);
                     clearPendingStart();
                 }
             } else if (data.type === 'worker_status') {
                 const status = (data.status ?? data.payload?.status ?? 'unknown') as WorkerStatus;
                 setWorkerStatus(status);
+                if (data.workerId) {
+                    setWorkers(prev => ({
+                        ...prev,
+                        [data.workerId as string]: {
+                            ...(prev[data.workerId as string] ?? { workerId: data.workerId as string }),
+                            workerId: data.workerId as string,
+                            workerName: data.workerName,
+                            status,
+                            simId: data.simId ?? null,
+                            shardId: (data as IncomingMessage & { shardId?: string | null }).shardId ?? null,
+                            maxDrones: (data as IncomingMessage & { maxDrones?: number | null }).maxDrones ?? prev[data.workerId as string]?.maxDrones ?? null,
+                            supportsSharding: (data as IncomingMessage & { supportsSharding?: boolean }).supportsSharding ?? prev[data.workerId as string]?.supportsSharding
+                        }
+                    }));
+                }
+            } else if (data.type === 'worker_list') {
+                setWorkers(mapWorkers(data.payload?.workers ?? data.workers));
             } else if (data.type === 'simulation_assigned') {
                 if (data.simId) locallyStoppedSimIdsRef.current.delete(data.simId);
                 activeSimIdRef.current = data.simId ?? null;
                 setActiveSimId(data.simId ?? null);
+                const shards = data.shards ?? [];
+                setSimulationShards(shards);
+                setIsShardedSimulation(Boolean(data.sharded || shards.length > 1));
                 setSimulationStatus('running');
                 setIsStartingSimulation(false);
                 setIsAwaitingConfig(true);
@@ -458,6 +499,9 @@ export function useSimulationSocket() {
                 setMissions({});
                 updateSelectedDroneId(null);
                 addLocalEvent('info', 'SIMULATION_ASSIGNED', `Simulation assigned to worker ${data.workerId ?? '-'}.`, data.timestamp);
+                if (data.sharded || shards.length > 1) {
+                    addLocalEvent('info', 'SHARDED_SIMULATION_ASSIGNED', `Da phan cum mo phong: ${data.totalDrones ?? '-'} UAV / ${shards.length} worker.`, data.timestamp);
+                }
             } else if (data.type === 'worker_busy') {
                 setSimulationStatus('idle');
                 clearPendingStart();
@@ -468,6 +512,8 @@ export function useSimulationSocket() {
                 setSimulationStatus(terminalToStatus(finishedStatus));
                 activeSimIdRef.current = null;
                 setActiveSimId(null);
+                setSimulationShards([]);
+                setIsShardedSimulation(false);
                 clearPendingStart();
                 clearSessionVisuals();
             } else if (data.type === 'ping') {
@@ -545,6 +591,8 @@ export function useSimulationSocket() {
                     setSimulationStatus('failed');
                     activeSimIdRef.current = null;
                     setActiveSimId(null);
+                    setSimulationShards([]);
+                    setIsShardedSimulation(false);
                     clearPendingStart();
                 }
             }
@@ -556,6 +604,8 @@ export function useSimulationSocket() {
             setSimulationStatus('stopped');
             activeSimIdRef.current = null;
             setActiveSimId(null);
+            setSimulationShards([]);
+            setIsShardedSimulation(false);
             clearPendingStart();
             clearSessionVisuals();
         };
@@ -570,6 +620,9 @@ export function useSimulationSocket() {
     return {
         serverStatus,
         workerStatus,
+        workers,
+        simulationShards,
+        isShardedSimulation,
         simulationStatus,
         activeSimId,
         frontendId,
