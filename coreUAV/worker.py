@@ -15,7 +15,7 @@ from map_cache import MapCacheError, cache_exists
 from simulation_world import SimulationWorld
 from statuses import DroneStatus, EventCode, EventLevel
 
-WS_URL = "ws://localhost:8080"
+WS_URL = os.getenv("BROKER_WS_URL", "ws://localhost:8080")
 SYSTEM_DRONE_ID = "system"
 DEFAULT_TELEMETRY_EVERY_N_STEPS = 5
 DEFAULT_MAP_ID = "hanoi_my_dinh_me_tri_large"

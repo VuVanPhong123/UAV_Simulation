@@ -1,0 +1,48 @@
+services:
+  broker:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: uav-broker
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  worker-1:
+    build:
+      context: ./coreUAV
+      dockerfile: Dockerfile
+    container_name: uav-worker-1
+    environment:
+      BROKER_WS_URL: ws://broker:8080
+      WORKER_NAME: docker-worker-1
+      WORKER_MAX_DRONES: 15
+      WORKER_SUPPORTS_SHARDING: "true"
+    depends_on:
+      - broker
+    restart: unless-stopped
+
+  worker-2:
+    build:
+      context: ./coreUAV
+      dockerfile: Dockerfile
+    container_name: uav-worker-2
+    environment:
+      BROKER_WS_URL: ws://broker:8080
+      WORKER_NAME: docker-worker-2
+      WORKER_MAX_DRONES: 15
+      WORKER_SUPPORTS_SHARDING: "true"
+    depends_on:
+      - broker
+    restart: unless-stopped
+
+  fe:
+    build:
+      context: ./fe
+      dockerfile: Dockerfile
+    container_name: uav-fe
+    ports:
+      - "3000:3000"
+    depends_on:
+      - broker
+    restart: unless-stopped
