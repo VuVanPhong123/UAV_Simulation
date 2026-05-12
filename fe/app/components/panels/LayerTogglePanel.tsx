@@ -13,9 +13,7 @@ const labels: Array<[keyof LayerToggles, string]> = [
     ['noFlyZones', 'Vùng cấm bay'],
     ['chargingStations', 'Trạm sạc'],
     ['plannedPath', 'Tuyến bay'],
-    ['pathHistory', 'Lịch sử bay'],
     ['dynamicObstacles', 'Vật cản'],
-    ['orders', 'Điểm lấy/giao hàng'],
     ['windShadow', 'Vùng cản gió'],
     ['sensorRange', 'Vùng cảm biến'],
     ['weatherOverlay', 'Hiệu ứng thời tiết']

@@ -2,6 +2,9 @@
 
 export type LatLng = [number, number];
 
+export const DEFAULT_DEMO_DRONE_COUNT = 5;
+export const MAX_DEMO_DRONE_COUNT = 15;
+
 export type ServerStatus = 'connecting' | 'connected' | 'disconnected';
 export type WorkerStatus = 'idle' | 'busy' | 'disconnected' | 'error' | 'unknown';
 export type SimulationStatus = 'idle' | 'running' | 'paused' | 'stopped' | 'failed';
@@ -262,5 +265,5 @@ export const DEFAULT_LAYER_TOGGLES: LayerToggles = {
     orders: true,
     windShadow: false,
     sensorRange: true,
-    weatherOverlay: true
+    weatherOverlay: false
 };

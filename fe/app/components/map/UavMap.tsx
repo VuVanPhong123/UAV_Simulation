@@ -35,6 +35,10 @@ const Tooltip = dynamic(() => import('react-leaflet').then(mod => mod.Tooltip), 
 const Circle = dynamic(() => import('react-leaflet').then(mod => mod.Circle), { ssr: false });
 const Pane = dynamic(() => import('react-leaflet').then(mod => mod.Pane), { ssr: false });
 
+const MAX_WIND_SHADOW_POINTS = 400;
+const MAX_RENDERED_PLANNED_PATH_POINTS = 250;
+const MAX_RENDERED_HISTORY_POINTS = 200;
+
 type UavMapProps = {
     buildings: GeoJsonObject | null;
     mapConfig: MapConfig | null;
@@ -60,6 +64,12 @@ type UavMapProps = {
 };
 
 const HIDDEN_ORDER_MARKER_STATUSES = new Set(['completed', 'failed', 'canceled']);
+
+function samplePolylinePositions(points: LatLng[], maxPoints: number) {
+    if (points.length <= maxPoints) return points;
+    const step = Math.ceil(points.length / maxPoints);
+    return points.filter((_, idx) => idx % step === 0).slice(0, maxPoints);
+}
 
 export default function UavMap({
     buildings,
@@ -91,12 +101,18 @@ export default function UavMap({
     const selectedDrone = selectedDroneId ? drones[selectedDroneId] : null;
     const sampledZones = useMemo(() => {
         if (!layers.windShadow) return [];
-        if (windShadowZones.length <= 500) return windShadowZones;
-        const step = Math.ceil(windShadowZones.length / 500);
-        return windShadowZones.filter((_, idx) => idx % step === 0);
+        return samplePolylinePositions(windShadowZones, MAX_WIND_SHADOW_POINTS);
     }, [layers.windShadow, windShadowZones]);
     const selectedPlannedPath = selectedDroneId ? plannedPaths[selectedDroneId] ?? [] : [];
     const selectedPathHistory = selectedDroneId ? pathHistoryByDrone[selectedDroneId] ?? [] : [];
+    const renderedPlannedPath = useMemo(
+        () => samplePolylinePositions(selectedPlannedPath, MAX_RENDERED_PLANNED_PATH_POINTS),
+        [selectedPlannedPath]
+    );
+    const renderedPathHistory = useMemo(
+        () => samplePolylinePositions(selectedPathHistory, MAX_RENDERED_HISTORY_POINTS),
+        [selectedPathHistory]
+    );
     const selectedMission = selectedMissionId ? missions[selectedMissionId] ?? null : null;
     const selectedMissionOrderId = selectedMission?.orderId ?? selectedMission?.order_id ?? null;
     const visibleOrderIds = useMemo(() => {
@@ -182,7 +198,7 @@ export default function UavMap({
                         data={buildings}
                         filter={(feature: Feature<Geometry, GeoJsonProperties>) => {
                             const geometryType = feature.geometry?.type;
-                            return geometryType !== 'Point' && geometryType !== 'MultiPoint';
+                            return geometryType === 'Polygon' || geometryType === 'MultiPolygon';
                         }}
                         style={() => ({ color: '#94a3b8', weight: 1, fillColor: '#e2e8f0', fillOpacity: 0.6 })}
                         onEachFeature={(feature: Feature<Geometry, GeoJsonProperties>, layer: Layer) => {
@@ -231,10 +247,10 @@ export default function UavMap({
                     </Circle>
                 ))}
 
-                {layers.plannedPath && selectedDroneId && selectedPlannedPath.length > 0 && (
+                {layers.plannedPath && selectedDroneId && renderedPlannedPath.length > 0 && (
                     <Polyline
                         key={`planned-${selectedDroneId}`}
-                        positions={selectedPlannedPath}
+                        positions={renderedPlannedPath}
                         pathOptions={{
                             color: '#f97316',
                             weight: 4,
@@ -244,10 +260,10 @@ export default function UavMap({
                     />
                 )}
 
-                {layers.pathHistory && selectedDroneId && selectedPathHistory.length > 0 && (
+                {layers.pathHistory && selectedDroneId && renderedPathHistory.length > 0 && (
                     <Polyline
                         key={`history-${selectedDroneId}`}
-                        positions={selectedPathHistory}
+                        positions={renderedPathHistory}
                         pathOptions={{
                             color: '#2563eb',
                             weight: 3,

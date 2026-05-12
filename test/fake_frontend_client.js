@@ -13,6 +13,18 @@ try {
 
 const WS_URL = 'ws://localhost:8080';
 const TOTAL_TIMEOUT_MS = 420000;
+const PERF_PROBE_ENABLED = process.env.UAV_PERF_PROBE === '1';
+const PERF_DRONE_COUNTS = [5, 8, 10, 15];
+const PERF_SAFE_POINTS = [
+  [21.0142, 105.7814],
+  [21.0148, 105.7854],
+  [21.0162, 105.7890],
+  [21.0187, 105.7894],
+  [21.0194, 105.7856],
+  [21.0175, 105.7815],
+  [21.0129, 105.7833],
+  [21.0201, 105.7876],
+];
 
 let ws;
 let simId = null;
@@ -267,6 +279,109 @@ function multiMissionCount() {
   return linkedMissions > 0 ? linkedMissions : observedMissions.size;
 }
 
+function makePerfOrders(count) {
+  return Array.from({ length: count }).map((_, idx) => {
+    const pickup = PERF_SAFE_POINTS[idx % PERF_SAFE_POINTS.length];
+    const dropoff = PERF_SAFE_POINTS[(idx + 3) % PERF_SAFE_POINTS.length];
+    return {
+      orderId: `order_perf_${count}_${idx + 1}`,
+      pickup,
+      dropoff,
+      payloadKg: 0.5 + (idx % 4) * 0.2,
+      priority: idx % 3 === 0 ? 'high' : 'normal',
+    };
+  });
+}
+
+async function waitForWorkerIdle(stepName) {
+  await waitFor(
+    (message) => (
+      message.type === 'worker_status' && (
+        message.status === 'idle' || (message.payload && message.payload.status === 'idle')
+      )
+    ) || (
+      message.type === 'connection_state' && message.workerStatus === 'idle'
+    ),
+    60000,
+    stepName
+  );
+}
+
+async function runPerfProbe() {
+  await waitFor((message) => message.type === 'registered' && message.role === 'frontend', 10000, 'frontend registered');
+  pass('frontend registered');
+  await waitForWorkerIdle('worker idle');
+  pass('worker idle');
+
+  for (const count of PERF_DRONE_COUNTS) {
+    clearBacklog();
+    clearObservedRuntime();
+    simId = null;
+    const startedAt = Date.now();
+    send({
+      type: 'request_start_simulation',
+      payload: {
+        mapId: 'hanoi_my_dinh_me_tri',
+        droneCount: count,
+        orderBatch: makePerfOrders(count),
+        autoDispatch: true,
+        simulationMode: 'order_dispatch',
+      },
+    });
+
+    const assigned = await waitFor((message) => message.type === 'simulation_assigned', 30000, `perf ${count} assigned`);
+    simId = assigned.simId;
+
+    await waitFor((message) => message.type === 'config' && message.simId === simId, 180000, `perf ${count} config`);
+
+    const telemetryDrones = new Set();
+    const pathDrones = new Set();
+    let telemetryMessages = 0;
+    const observeUntil = Date.now() + 5000;
+    while (Date.now() < observeUntil || telemetryDrones.size < count || pathDrones.size < Math.min(count, 3)) {
+      const message = await waitFor(
+        (candidate) => (
+          candidate.simId === simId
+          && ['telemetry', 'planned_path', 'event', 'order_update', 'order_state', 'mission_update'].includes(candidate.type)
+        ),
+        180000,
+        `perf ${count} runtime alive`
+      );
+      if (message.type === 'telemetry' && isValidTelemetry(message)) {
+        telemetryDrones.add(droneId(message));
+        telemetryMessages += 1;
+      }
+      if (message.type === 'planned_path' && isValidPlannedPath3d(message)) {
+        pathDrones.add(droneId(message));
+      }
+      if (telemetryDrones.size >= count && pathDrones.size >= Math.min(count, 3) && Date.now() >= observeUntil) {
+        break;
+      }
+    }
+
+    const elapsedMs = Date.now() - startedAt;
+    console.log(`[PERF] ${count} UAV: telemetryDrones=${telemetryDrones.size}, plannedPathDrones=${pathDrones.size}, telemetryMessages=${telemetryMessages}, elapsedMs=${elapsedMs}`);
+    pass(`perf ${count} UAV`);
+
+    clearBacklog();
+    send({
+      type: 'command',
+      simId,
+      action: 'stop',
+    });
+    await waitFor(
+      (message) => message.type === 'simulation_finished' && message.simId === simId,
+      60000,
+      `perf ${count} stop`
+    );
+    simId = null;
+    await waitForWorkerIdle(`perf ${count} worker idle`);
+  }
+
+  pass('optional perf probe completed');
+  cleanup(0);
+}
+
 async function runScenario() {
   await waitFor((message) => message.type === 'registered' && message.role === 'frontend', 10000, 'frontend registered');
   pass('frontend registered');
@@ -374,6 +489,35 @@ async function runScenario() {
       autoDispatch: true,
       orders: [
         {
+          orderId: 'order_live_add',
+          pickup: [21.0194, 105.7856],
+          dropoff: [21.0148, 105.7854],
+          payloadKg: 0.6,
+          priority: 'high',
+        },
+      ],
+    },
+  });
+
+  await waitFor(
+    (message) => {
+      if (message.simId !== simId || !['order_update', 'order_state'].includes(message.type)) return false;
+      const order = findOrder(message, 'order_live_add');
+      return order && ['assigned', 'going_to_pickup', 'picked_up', 'delivering', 'completed'].includes(order.status);
+    },
+    180000,
+    'live order dispatch accepted'
+  );
+  pass('live order dispatch accepted');
+
+  clearBacklog();
+  send({
+    type: 'order_batch',
+    simId,
+    payload: {
+      autoDispatch: true,
+      orders: [
+        {
           orderId: 'order_too_heavy',
           pickup: [21.0142, 105.7814],
           dropoff: [21.0194, 105.7856],
@@ -444,6 +588,30 @@ async function runScenario() {
     'obstacle accepted'
   );
   pass('obstacle accepted');
+
+  clearBacklog();
+  send({
+    type: 'add_no_fly_zone',
+    simId,
+    payload: {
+      center: [21.0156, 105.7828],
+      radius: 35,
+      height: 50,
+    },
+  });
+
+  await waitFor(
+    (message) => (
+      message.type === 'event'
+      && message.simId === simId
+      && ['NO_FLY_ZONE_ADDED', 'NO_FLY_ZONE_REPLAN', 'NO_FLY_ZONE_REPLAN_FAILED'].includes(eventCode(message))
+    ) || (
+      message.type === 'planned_path' && message.simId === simId
+    ),
+    60000,
+    'no-fly zone accepted'
+  );
+  pass('no-fly zone accepted');
 
   clearBacklog();
   send({
@@ -662,7 +830,8 @@ ws.on('open', () => {
     type: 'register',
     role: 'frontend',
   });
-  runScenario().catch((error) => fail('pipeline test', error.message));
+  const runner = PERF_PROBE_ENABLED ? runPerfProbe : runScenario;
+  runner().catch((error) => fail(PERF_PROBE_ENABLED ? 'optional perf probe' : 'pipeline test', error.message));
 });
 
 ws.on('message', (data) => {

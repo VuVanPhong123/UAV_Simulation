@@ -1,6 +1,10 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+    DEFAULT_DEMO_DRONE_COUNT,
+    MAX_DEMO_DRONE_COUNT
+} from '../types/simulation';
 import type {
     DroneTelemetry,
     DynamicNoFlyZone,
@@ -28,6 +32,35 @@ type StartSimulationInput = number | {
     orderBatch?: unknown[];
     mapId?: string;
 };
+
+const MAX_EVENT_LOGS = 200;
+const WIND_SHADOW_MAX_POINTS = 400;
+
+function clampDroneCount(value: number) {
+    if (!Number.isFinite(value)) return DEFAULT_DEMO_DRONE_COUNT;
+    return Math.max(1, Math.min(MAX_DEMO_DRONE_COUNT, Math.floor(value)));
+}
+
+function sampleLatLngPoints(points: LatLng[], maxPoints: number) {
+    if (points.length <= maxPoints) return points;
+    const step = Math.ceil(points.length / maxPoints);
+    return points.filter((_, idx) => idx % step === 0).slice(0, maxPoints);
+}
+
+function pathSignature(path: LatLng[], path3d: PlannedPath3DPoint[]) {
+    const first = path[0];
+    const last = path[path.length - 1];
+    const first3d = path3d[0];
+    const last3d = path3d[path3d.length - 1];
+    return [
+        path.length,
+        first?.join(',') ?? '',
+        last?.join(',') ?? '',
+        path3d.length,
+        first3d ? `${first3d.pos.join(',')}:${first3d.altitude}` : '',
+        last3d ? `${last3d.pos.join(',')}:${last3d.altitude}` : ''
+    ].join('|');
+}
 
 function terminalToStatus(status?: string): SimulationStatus {
     if (status === 'success' || status === 'stopped') return 'stopped';
@@ -63,6 +96,7 @@ function mapMissions(items?: Mission[]) {
 export function useSimulationSocket() {
     const wsRef = useRef<WebSocket | null>(null);
     const activeSimIdRef = useRef<string | null>(null);
+    const plannedPathSignaturesRef = useRef<Record<string, string>>({});
     const [serverStatus, setServerStatus] = useState<ServerStatus>('connecting');
     const [workerStatus, setWorkerStatus] = useState<WorkerStatus>('unknown');
     const [simulationStatus, setSimulationStatus] = useState<SimulationStatus>('idle');
@@ -87,7 +121,7 @@ export function useSimulationSocket() {
         setEventLogs(prev => [
             { level, code, message, timestamp: timestamp ?? Date.now() },
             ...prev
-        ].slice(0, 50));
+        ].slice(0, MAX_EVENT_LOGS));
     }, []);
 
     const sendJson = useCallback((payload: Record<string, unknown>) => {
@@ -102,6 +136,7 @@ export function useSimulationSocket() {
     const clearSessionVisuals = useCallback(() => {
         setPlannedPaths({});
         setPlannedPaths3d({});
+        plannedPathSignaturesRef.current = {};
         setWindShadowZones([]);
         setOrders({});
         setMissions({});
@@ -110,6 +145,11 @@ export function useSimulationSocket() {
     const selectedDrone = selectedDroneId ? drones[selectedDroneId] ?? null : null;
     const selectedPlannedPath = selectedDroneId ? plannedPaths[selectedDroneId] ?? [] : [];
     const selectedPath3d = selectedDroneId ? plannedPaths3d[selectedDroneId] ?? [] : [];
+
+    const isCurrentSimulationMessage = useCallback((messageSimId?: string | null) => {
+        if (!messageSimId) return true;
+        return activeSimIdRef.current === messageSimId;
+    }, []);
 
     const sendCommand = useCallback((action: 'pause' | 'resume' | 'stop' | 'reset') => {
         if (!activeSimId) {
@@ -127,7 +167,7 @@ export function useSimulationSocket() {
     }, [activeSimId, addLocalEvent, clearSessionVisuals, sendJson]);
 
     const startSimulation = useCallback((input: StartSimulationInput = 1) => {
-        const droneCount = typeof input === 'number' ? input : input.droneCount;
+        const droneCount = clampDroneCount(typeof input === 'number' ? input : input.droneCount);
         const orderBatch = typeof input === 'number' ? undefined : input.orderBatch;
         const mapId = typeof input === 'number' ? 'hanoi_my_dinh_me_tri' : input.mapId ?? 'hanoi_my_dinh_me_tri';
         return sendJson({
@@ -234,17 +274,20 @@ export function useSimulationSocket() {
             } else if (data.type === 'connection_state') {
                 setServerStatus(data.server === 'connected' ? 'connected' : 'disconnected');
                 setWorkerStatus(data.workerStatus ?? 'unknown');
+                activeSimIdRef.current = data.activeSimId ?? null;
                 setActiveSimId(data.activeSimId ?? null);
                 setSimulationStatus(data.activeSimId ? 'running' : 'idle');
             } else if (data.type === 'worker_status') {
                 const status = (data.status ?? data.payload?.status ?? 'unknown') as WorkerStatus;
                 setWorkerStatus(status);
             } else if (data.type === 'simulation_assigned') {
+                activeSimIdRef.current = data.simId ?? null;
                 setActiveSimId(data.simId ?? null);
                 setSimulationStatus('running');
                 setDrones({});
                 setPlannedPaths({});
                 setPlannedPaths3d({});
+                plannedPathSignaturesRef.current = {};
                 setOrders({});
                 setMissions({});
                 setSelectedDroneId(null);
@@ -253,8 +296,10 @@ export function useSimulationSocket() {
                 setSimulationStatus('idle');
                 addLocalEvent('warning', 'WORKER_BUSY', data.message ?? 'No idle worker available.', data.timestamp);
             } else if (data.type === 'simulation_finished') {
+                if (!isCurrentSimulationMessage(data.simId)) return;
                 const finishedStatus = data.payload?.status;
                 setSimulationStatus(terminalToStatus(finishedStatus));
+                activeSimIdRef.current = null;
                 setActiveSimId(null);
                 clearSessionVisuals();
             } else if (data.type === 'ping') {
@@ -262,8 +307,10 @@ export function useSimulationSocket() {
             } else if (data.type === 'latency_update') {
                 setLatencyMs(data.latencyMs ?? null);
             } else if (data.type === 'config') {
+                if (!isCurrentSimulationMessage(data.simId)) return;
                 setMapConfig(data);
             } else if (data.type === 'telemetry') {
+                if (!isCurrentSimulationMessage(data.simId)) return;
                 const telemetry = (data.payload ?? data) as DroneTelemetry;
                 const droneId = data.droneId ?? telemetry.droneId ?? 'drone_1';
                 const nextTelemetry = { ...telemetry, droneId };
@@ -273,27 +320,38 @@ export function useSimulationSocket() {
                     setSimulationStatus('running');
                 }
             } else if (data.type === 'wind_shadow_zones') {
-                setWindShadowZones(data.payload?.zones ?? data.zones ?? []);
+                if (!isCurrentSimulationMessage(data.simId)) return;
+                setWindShadowZones(sampleLatLngPoints(data.payload?.zones ?? data.zones ?? [], WIND_SHADOW_MAX_POINTS));
             } else if (data.type === 'planned_path') {
+                if (!isCurrentSimulationMessage(data.simId)) return;
                 const droneId = data.droneId ?? data.payload?.droneId ?? 'drone_1';
-                setPlannedPaths(prev => ({ ...prev, [droneId]: data.payload?.path ?? data.path ?? [] }));
-                setPlannedPaths3d(prev => ({ ...prev, [droneId]: data.payload?.path3d ?? data.path3d ?? [] }));
+                const path = data.payload?.path ?? data.path ?? [];
+                const path3d = data.payload?.path3d ?? data.path3d ?? [];
+                const signature = pathSignature(path, path3d);
+                if (plannedPathSignaturesRef.current[droneId] === signature) return;
+                plannedPathSignaturesRef.current[droneId] = signature;
+                setPlannedPaths(prev => ({ ...prev, [droneId]: path }));
+                setPlannedPaths3d(prev => ({ ...prev, [droneId]: path3d }));
             } else if (data.type === 'order_state') {
+                if (!isCurrentSimulationMessage(data.simId)) return;
                 setOrders(mapOrders(data.payload?.orders as DeliveryOrder[] | undefined));
                 setMissions(mapMissions(data.payload?.missions as Mission[] | undefined));
             } else if (data.type === 'order_update') {
+                if (!isCurrentSimulationMessage(data.simId)) return;
                 const order = data.payload as DeliveryOrder | undefined;
                 const key = order ? orderKey(order) : '';
                 if (order && key) {
                     setOrders(prev => ({ ...prev, [key]: order }));
                 }
             } else if (data.type === 'mission_update') {
+                if (!isCurrentSimulationMessage(data.simId)) return;
                 const mission = data.payload as Mission | undefined;
                 const key = mission ? missionKey(mission) : '';
                 if (mission && key) {
                     setMissions(prev => ({ ...prev, [key]: mission }));
                 }
             } else if (data.type === 'event') {
+                if (!isCurrentSimulationMessage(data.simId)) return;
                 const payload = data.payload ?? {};
                 const droneId = data.droneId ?? payload.droneId ?? null;
                 setEventLogs(prev => [
@@ -307,7 +365,7 @@ export function useSimulationSocket() {
                         timestamp: data.timestamp ?? Date.now()
                     },
                     ...prev
-                ].slice(0, 50));
+                ].slice(0, MAX_EVENT_LOGS));
             }
         };
 
@@ -315,7 +373,9 @@ export function useSimulationSocket() {
             setServerStatus('disconnected');
             setWorkerStatus('disconnected');
             setSimulationStatus('stopped');
+            activeSimIdRef.current = null;
             setActiveSimId(null);
+            clearSessionVisuals();
         };
 
         ws.onerror = () => {
@@ -323,7 +383,7 @@ export function useSimulationSocket() {
         };
 
         return () => ws.close();
-    }, [addLocalEvent, clearSessionVisuals]);
+    }, [addLocalEvent, clearSessionVisuals, isCurrentSimulationMessage]);
 
     return {
         serverStatus,

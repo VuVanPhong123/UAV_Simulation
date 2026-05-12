@@ -18,6 +18,14 @@ TERMINAL_STATUSES = {
     DroneStatus.EMERGENCY_LANDING.value,
 }
 
+DEFAULT_MAX_DEMO_DRONES = 15
+
+
+def clamp_drone_count(value, config):
+    max_demo_drones = int(config.get("performance", {}).get("max_demo_drones", DEFAULT_MAX_DEMO_DRONES))
+    max_demo_drones = max(1, min(DEFAULT_MAX_DEMO_DRONES, max_demo_drones))
+    return max(1, min(max_demo_drones, int(value or 1)))
+
 
 @dataclass
 class DroneAgent:
@@ -90,7 +98,7 @@ class SimulationWorld:
         self.obstacles = []
         self.no_fly_zones = []
         self.proximity_cooldowns = {}
-        self.drone_count = max(1, min(5, int(drone_count or 1)))
+        self.drone_count = clamp_drone_count(drone_count, self.config)
         self.agents = {}
         self.orders = {}
         self.missions = {}
@@ -100,7 +108,7 @@ class SimulationWorld:
 
     def reset(self, drone_count=None):
         if drone_count is not None:
-            self.drone_count = max(1, min(5, int(drone_count or 1)))
+            self.drone_count = clamp_drone_count(drone_count, self.config)
         self.step_count = 0
         self.pending_events = []
         self.pending_order_updates = []

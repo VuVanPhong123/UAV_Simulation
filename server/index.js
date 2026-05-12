@@ -249,7 +249,7 @@ function routeFrontendMessage(ws, data) {
 }
 
 function finishSimulation(simulation, status, notifyFrontend = true) {
-    simulation.status = status === 'success' ? 'stopped' : 'failed';
+    simulation.status = ['success', 'stopped'].includes(status) ? 'stopped' : 'failed';
 
     const workerWs = workers.get(simulation.workerId);
     const workerMeta = workerWs ? getClientMeta(workerWs) : null;
@@ -399,6 +399,11 @@ function handleClose(ws) {
         if (activeSim) {
             activeSim.status = 'failed';
             const frontendWs = frontends.get(activeSim.frontendId);
+            const frontendMeta = frontendWs ? getClientMeta(frontendWs) : null;
+            if (frontendMeta) {
+                frontendMeta.status = 'idle';
+                frontendMeta.simId = null;
+            }
             if (frontendWs) {
                 sendBrokerEventToFrontend(frontendWs, 'error', 'WORKER_DISCONNECTED', 'Worker disconnected.', activeSim.simId);
                 safeSend(frontendWs, {

@@ -11,6 +11,8 @@ import { useSimulationSocket } from '../hooks/useSimulationSocket';
 import { useTelemetryHistory } from '../hooks/useTelemetryHistory';
 import {
     DEFAULT_LAYER_TOGGLES,
+    DEFAULT_DEMO_DRONE_COUNT,
+    MAX_DEMO_DRONE_COUNT,
     type ActiveDashboardSection,
     type DraftOrder,
     type DynamicNoFlyZone,
@@ -40,6 +42,11 @@ function createDraftOrder(): DraftOrder {
     };
 }
 
+function clampDroneCount(value: number) {
+    if (!Number.isFinite(value)) return DEFAULT_DEMO_DRONE_COUNT;
+    return Math.max(1, Math.min(MAX_DEMO_DRONE_COUNT, Math.floor(value)));
+}
+
 export default function GcsDashboard() {
     const socket = useSimulationSocket();
     const telemetryHistory = useTelemetryHistory(socket.drones, socket.selectedDroneId);
@@ -51,7 +58,7 @@ export default function GcsDashboard() {
     const [dynamicObstacles, setDynamicObstacles] = useState<DynamicObstacle[]>([]);
     const [dynamicNoFlyZones, setDynamicNoFlyZones] = useState<DynamicNoFlyZone[]>([]);
     const [layers, setLayers] = useState<LayerToggles>(DEFAULT_LAYER_TOGGLES);
-    const [droneCount, setDroneCount] = useState(5);
+    const [droneCount, setDroneCount] = useState(DEFAULT_DEMO_DRONE_COUNT);
     const [activeSection, setActiveSection] = useState<ActiveDashboardSection>('overview');
     const [draftOrder, setDraftOrder] = useState<DraftOrder>(createDraftOrder);
     const [draftOrders, setDraftOrders] = useState<DraftOrder[]>([]);
@@ -68,7 +75,7 @@ export default function GcsDashboard() {
         && Number.isFinite(order.payloadKg)
         && order.payloadKg > 0
     ));
-    const canStartWithOrders = droneCount >= 1 && draftOrders.length > 0 && validDraftOrders.length === draftOrders.length;
+    const canStartWithOrders = droneCount >= 1 && droneCount <= MAX_DEMO_DRONE_COUNT && draftOrders.length > 0 && validDraftOrders.length === draftOrders.length;
     const startHint = 'Cần có ít nhất một đơn hàng hợp lệ trước khi bắt đầu mô phỏng.';
 
     useEffect(() => {
@@ -196,13 +203,19 @@ export default function GcsDashboard() {
             addLocalEvent('warning', 'START_NEEDS_ORDERS', startHint);
             return false;
         }
-        if (!socket.startSimulation({ droneCount, orderBatch: validDraftOrders })) {
+        const normalizedDroneCount = clampDroneCount(droneCount);
+        if (!socket.startSimulation({ droneCount: normalizedDroneCount, orderBatch: validDraftOrders })) {
             return false;
         }
+        setDroneCount(normalizedDroneCount);
         setDraftOrders([]);
         addLocalEvent('info', 'ORDER_FIRST_START_REQUESTED', `Bắt đầu mô phỏng với ${validDraftOrders.length} đơn hàng.`);
         return true;
     }, [addLocalEvent, canStartWithOrders, droneCount, socket, startHint, validDraftOrders]);
+
+    const handleDroneCountChange = useCallback((value: number) => {
+        setDroneCount(clampDroneCount(value));
+    }, []);
 
     const normalizePriority = useCallback((value: unknown): OrderPriority => {
         return ['low', 'normal', 'high', 'urgent'].includes(String(value)) ? String(value) as OrderPriority : 'normal';
@@ -412,7 +425,7 @@ export default function GcsDashboard() {
                     canStartWithOrders={canStartWithOrders}
                     startHint={startHint}
                     onStart={handleStartWithDraftOrders}
-                    onDroneCountChange={setDroneCount}
+                    onDroneCountChange={handleDroneCountChange}
                     onSelectDrone={handleSelectDrone}
                     onPause={socket.pauseSimulation}
                     onResume={socket.resumeSimulation}

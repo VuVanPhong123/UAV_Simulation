@@ -17,6 +17,9 @@ WS_URL = "ws://localhost:8080"
 SYSTEM_DRONE_ID = "system"
 DEFAULT_TELEMETRY_EVERY_N_STEPS = 5
 DEFAULT_MAP_ID = "hanoi_my_dinh_me_tri"
+DEFAULT_DEMO_DRONES = 5
+DEFAULT_MAX_DEMO_DRONES = 15
+DEFAULT_WIND_SHADOW_MAX_POINTS = 400
 
 
 def now_ms():
@@ -29,6 +32,21 @@ def parse_bool(value):
     if isinstance(value, str):
         return value.strip().lower() in ("1", "true", "yes", "on")
     return bool(value)
+
+
+def clamp_int(value, minimum, maximum, fallback):
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = fallback
+    return max(minimum, min(maximum, parsed))
+
+
+def sample_evenly(items, max_points):
+    if max_points <= 0 or len(items) <= max_points:
+        return items
+    step = max(1, (len(items) + max_points - 1) // max_points)
+    return items[::step][:max_points]
 
 
 def config_for_map(base_config, requested_map_id=None):
@@ -64,6 +82,24 @@ def main():
         config = yaml.safe_load(f)
     base_config = copy.deepcopy(config)
     performance_config = config.get("performance", {})
+    max_demo_drones = clamp_int(
+        performance_config.get("max_demo_drones"),
+        1,
+        DEFAULT_MAX_DEMO_DRONES,
+        DEFAULT_MAX_DEMO_DRONES
+    )
+    default_demo_drones = clamp_int(
+        performance_config.get("default_demo_drones"),
+        1,
+        max_demo_drones,
+        DEFAULT_DEMO_DRONES
+    )
+    wind_shadow_max_points = clamp_int(
+        performance_config.get("wind_shadow_max_points"),
+        0,
+        2000,
+        DEFAULT_WIND_SHADOW_MAX_POINTS
+    )
     telemetry_every_n_steps = max(
         1,
         int(performance_config.get("telemetry_every_n_steps", DEFAULT_TELEMETRY_EVERY_N_STEPS))
@@ -81,6 +117,7 @@ def main():
     drone_count = 1
     last_path_ids = {}
     dt = config["simulation"]["time_step"]
+    wind_shadow_requested = send_wind_shadow_by_default
 
     def current_sim_id():
         return sim_id
@@ -232,6 +269,7 @@ def main():
         shadow_gps = []
         if world.wind_speed > 0:
             shadow_utm = world.graph.get_wind_shadow_nodes(world.wind_dir, config["drone"]["normal_altitude"])
+            shadow_utm = sample_evenly(shadow_utm, wind_shadow_max_points)
             for (x, y) in shadow_utm:
                 lon, lat = transformer.transform(x, y)
                 shadow_gps.append([lat, lon])
@@ -287,11 +325,11 @@ def main():
             "path3d": payload["path3d"]
         }))
 
-    def send_all_planned_paths():
+    def send_all_planned_paths(include_empty=False):
         if world is None or transformer is None:
             return
         for agent in world.get_agents():
-            send_planned_path_for_agent(agent)
+            send_planned_path_for_agent(agent, include_empty=include_empty)
 
     def send_simulation_finished(status):
         ws.send(json.dumps({
@@ -416,11 +454,12 @@ def main():
                 sim_id = data.get("simId")
                 frontend_id = data.get("frontendId")
                 requested_map_id = payload.get("mapId") or payload.get("map_id")
-                drone_count = max(1, min(5, int(payload.get("droneCount", 1) or 1)))
+                drone_count = clamp_int(payload.get("droneCount"), 1, max_demo_drones, default_demo_drones)
                 is_assigned = True
                 is_running = False
                 step = 0
                 telemetry_counter = 0
+                wind_shadow_requested = send_wind_shadow_by_default
 
                 config = config_for_map(base_config, requested_map_id)
                 dt = config["simulation"]["time_step"]
@@ -432,6 +471,7 @@ def main():
                         f"Map cache missing for mapId={map_id}. Build cache before demo.",
                         SYSTEM_DRONE_ID,
                     )
+                    send_simulation_finished("failed")
                     send_worker_status("idle")
                     is_assigned = False
                     sim_id = None
@@ -461,7 +501,8 @@ def main():
                         SYSTEM_DRONE_ID
                     )
                 send_all_telemetry()
-                send_wind_shadow_zones()
+                if wind_shadow_requested:
+                    send_wind_shadow_zones()
                 drain_world_events()
                 is_running = True
                 print(f"Bat dau simulation {sim_id} cho {frontend_id} voi {drone_count} drone")
@@ -525,7 +566,8 @@ def main():
                     f"Weather changed: wind_to={world.wind_dir} deg, speed={world.wind_speed} m/s, temp={world.ambient_temp} C, rain={'on' if world.is_raining else 'off'}. Replanning paths.",
                     SYSTEM_DRONE_ID
                 )
-                send_wind_shadow_zones()
+                if wind_shadow_requested:
+                    send_wind_shadow_zones()
                 send_all_planned_paths()
                 send_all_telemetry()
                 drain_world_events()
@@ -535,6 +577,7 @@ def main():
             elif msg_type == "request_wind_shadow":
                 if not is_assigned or reject_wrong_sim(data):
                     continue
+                wind_shadow_requested = True
                 send_wind_shadow_zones()
 
             elif msg_type == "order_batch":
@@ -575,8 +618,10 @@ def main():
                     step = 0
                     telemetry_counter = 0
                     send_all_telemetry()
-                    send_wind_shadow_zones()
-                    send_all_planned_paths()
+                    if wind_shadow_requested:
+                        send_wind_shadow_zones()
+                    send_all_planned_paths(include_empty=True)
+                    send_order_state()
                     drain_world_events()
                     last_path_ids = mark_current_paths()
                     is_running = True
@@ -585,6 +630,9 @@ def main():
                     is_running = False
                     world.stop()
                     send_all_telemetry(True)
+                    send_all_planned_paths(include_empty=True)
+                    drain_order_mission_updates()
+                    send_order_state()
                     send_event(EventLevel.INFO.value, EventCode.SIMULATION_STOPPED.value, "Simulation stopped by operator.")
                     send_simulation_finished("stopped")
                     send_worker_status("idle")

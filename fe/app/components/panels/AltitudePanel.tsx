@@ -38,7 +38,7 @@ export default function AltitudePanel({ droneState, plannedPath3d, altitudeHisto
 
     return (
         <section className="rounded border border-slate-200 bg-white p-3">
-            <h2 className="border-b border-slate-100 pb-2 text-xs font-bold uppercase text-slate-500">Hồ sơ độ cao</h2>
+            <h2 className="border-b border-slate-100 pb-2 text-xs font-bold uppercase text-slate-500">Độ cao</h2>
             <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 font-mono text-xs font-bold text-slate-700">
                 {rows.map(([label, value]) => (
                     <div key={label} className="contents">

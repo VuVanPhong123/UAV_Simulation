@@ -87,8 +87,11 @@ performance:
   require_map_cache: true
   grid_resolution: 10.0
   altitude_levels: [20.0, 35.0, 50.0]
+  default_demo_drones: 5
+  max_demo_drones: 15
   send_wind_shadow_by_default: false
-  telemetry_every_n_steps: 3
+  wind_shadow_max_points: 400
+  telemetry_every_n_steps: 4
   max_history_points: 120
   render_other_drone_paths: false
   verbose_planner_logs: false

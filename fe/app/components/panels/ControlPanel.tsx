@@ -1,6 +1,7 @@
 'use client';
 
 import type { ReactNode } from 'react';
+import { MAX_DEMO_DRONE_COUNT } from '../types/simulation';
 import type { ServerStatus, SimulationStatus, WorkerStatus } from '../types/simulation';
 
 type ControlPanelProps = {
@@ -62,6 +63,7 @@ export default function ControlPanel({
     onPause,
     onResume,
     onReset,
+    onDroneCountChange,
     onOpenOrderModal
 }: ControlPanelProps) {
     const startDisabled = serverStatus !== 'connected' || workerStatus !== 'idle' || simulationStatus === 'running' || !canStartWithOrders;
@@ -72,7 +74,19 @@ export default function ControlPanel({
     return (
         <section className="rounded border border-slate-200 bg-white p-3">
             <h2 className="border-b border-slate-100 pb-2 text-xs font-bold uppercase text-slate-500">Điều khiển mô phỏng</h2>
-            <p className="mt-3 text-xs font-semibold text-slate-500">Số UAV mặc định: {droneCount}</p>
+            <label className="mt-3 block text-xs font-semibold text-slate-500">
+                Số UAV demo
+                <input
+                    value={droneCount}
+                    min={1}
+                    max={MAX_DEMO_DRONE_COUNT}
+                    type="number"
+                    disabled={simulationStatus === 'running'}
+                    onChange={event => onDroneCountChange?.(Number(event.target.value))}
+                    className="mt-1 w-full rounded border border-slate-300 bg-white px-2 py-2 text-xs font-bold text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
+                />
+            </label>
+            <p className="mt-1 text-[11px] font-semibold text-slate-400">Tối đa {MAX_DEMO_DRONE_COUNT} UAV.</p>
             {onOpenOrderModal && (
                 <button
                     data-testid="open-order-modal"
