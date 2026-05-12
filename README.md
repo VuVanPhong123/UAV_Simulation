@@ -1,6 +1,6 @@
 
 # Cách chạy dự án UAV
-
+# Xem cách sử dụng hệ thống ở HOW_TO_USE.md
 ## 1. Chạy thủ công
 
 Cần mở 3 terminal.
