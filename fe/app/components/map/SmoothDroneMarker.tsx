@@ -33,8 +33,8 @@ type SmoothDroneMarkerProps = {
 
 export const ALTITUDE_COLOR_BANDS = [
     { key: 'low', label: 'Thấp <25m', color: '#16a34a', halo: '#bbf7d0' },
-    { key: 'medium', label: 'Trung bình 25-45m', color: '#2563eb', halo: '#bfdbfe' },
-    { key: 'high', label: 'Cao 45-60m', color: '#ea580c', halo: '#fed7aa' },
+    { key: 'medium', label: 'Trung bình 25-40m', color: '#2563eb', halo: '#bfdbfe' },
+    { key: 'high', label: 'Cao 40-60m', color: '#ea580c', halo: '#fed7aa' },
     { key: 'very-high', label: 'Rất cao ≥60m', color: '#7e22ce', halo: '#ddd6fe' }
 ] as const;
 
@@ -43,7 +43,7 @@ export function getUavAltitudeColors(altitude?: number | null) {
         return { color: '#475569', halo: '#cbd5e1' };
     }
     if (altitude < 25) return ALTITUDE_COLOR_BANDS[0];
-    if (altitude < 45) return ALTITUDE_COLOR_BANDS[1];
+    if (altitude < 40) return ALTITUDE_COLOR_BANDS[1];
     if (altitude < 60) return ALTITUDE_COLOR_BANDS[2];
     return ALTITUDE_COLOR_BANDS[3];
 }

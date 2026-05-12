@@ -35,7 +35,7 @@ class WaypointGraph:
         self.dynamic_obstacles = []
         self.dynamic_no_fly_zones = []
         if self.performance_config.get("use_map_cache", True):
-            map_id = config.get("map", {}).get("map_id", "hanoi_my_dinh_me_tri")
+            map_id = config.get("map", {}).get("map_id", "hanoi_my_dinh_me_tri_large")
             try:
                 self._load_cached_grid(map_id)
                 print(f"[Graph] Loaded map cache '{map_id}' ({self.cols}x{self.rows}, {len(self.altitude_levels)} altitude levels).")
@@ -48,7 +48,7 @@ class WaypointGraph:
 
         import geopandas as gpd
         print("[Graph] Loading building data for legacy 2.5D grid...")
-        map_id = config.get("map", {}).get("map_id", "hanoi_my_dinh_me_tri")
+        map_id = config.get("map", {}).get("map_id", "hanoi_my_dinh_me_tri_large")
         self.buildings = gpd.read_file(f'maps/{map_id}/buildings.geojson')
         
         self.buildings = self.buildings.to_crs(epsg=32648) 
@@ -298,6 +298,32 @@ class WaypointGraph:
         if not np.isfinite(lat) or not np.isfinite(lon):
             raise ValueError("latlng values must be finite numbers")
         return self._get_nearest_node([lat, lon])
+
+    def find_nearest_clear_node(self, latlng, altitude, max_radius_cells=8):
+        base = self.latlng_to_node(latlng)
+        if self.is_node_clear_at_altitude(base, altitude):
+            return base
+
+        max_radius_cells = max(0, int(max_radius_cells))
+        for radius in range(1, max_radius_cells + 1):
+            best = None
+            best_dist = float("inf")
+            for dx in range(-radius, radius + 1):
+                for dy in range(-radius, radius + 1):
+                    if abs(dx) != radius and abs(dy) != radius:
+                        continue
+                    node = (base[0] + dx, base[1] + dy)
+                    if node not in self.nodes:
+                        continue
+                    if not self.is_node_clear_at_altitude(node, altitude):
+                        continue
+                    dist = dx * dx + dy * dy
+                    if dist < best_dist:
+                        best = node
+                        best_dist = dist
+            if best is not None:
+                return best
+        return base
 
     def latlng_to_utm(self, latlng):
         if not isinstance(latlng, (list, tuple)) or len(latlng) != 2:

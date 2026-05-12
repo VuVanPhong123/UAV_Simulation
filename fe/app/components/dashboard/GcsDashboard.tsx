@@ -1,18 +1,22 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { GeoJsonObject } from 'geojson';
 import TopStatusBar from './TopStatusBar';
 import LeftNavigation from './LeftNavigation';
 import RightDetailPanel from './RightDetailPanel';
 import BottomDroneInfoPanel from './BottomDroneInfoPanel';
+import MapSelectorModal from './MapSelectorModal';
 import UavMap from '../map/UavMap';
 import { useSimulationSocket } from '../hooks/useSimulationSocket';
 import { useTelemetryHistory } from '../hooks/useTelemetryHistory';
 import {
     DEFAULT_LAYER_TOGGLES,
     DEFAULT_DEMO_DRONE_COUNT,
+    DEFAULT_MAP_PRESET_ID,
+    MAP_PRESET_OPTIONS,
     MAX_DEMO_DRONE_COUNT,
+    PRESET_PREVIEW_MAP_CONFIGS,
     type ActiveDashboardSection,
     type AsyncRequestStatus,
     type DraftOrder,
@@ -21,6 +25,7 @@ import {
     type EventFilter,
     type LatLng,
     type LayerToggles,
+    type MapPresetId,
     type MapInteractionMode,
     type ObstacleConfig,
     type ObstacleType,
@@ -76,8 +81,20 @@ export default function GcsDashboard() {
     const [selectedMissionId, setSelectedMissionId] = useState<string | null>(null);
     const [eventFilter, setEventFilter] = useState<EventFilter>('all');
     const [mapInteractionMode, setMapInteractionMode] = useState<MapInteractionMode>('none');
+    const [selectedMapId, setSelectedMapId] = useState<MapPresetId>(DEFAULT_MAP_PRESET_ID);
+    const [mapSelectorOpen, setMapSelectorOpen] = useState(false);
     const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
     const [importError, setImportError] = useState<string | null>(null);
+    const lastMapErrorKeyRef = useRef<string | null>(null);
+    const windShadowRequestedSimRef = useRef<string | null>(null);
+    const selectedMapPreset = MAP_PRESET_OPTIONS.find(option => option.mapId === selectedMapId) ?? MAP_PRESET_OPTIONS[0];
+    const previewMapConfig = PRESET_PREVIEW_MAP_CONFIGS[selectedMapId];
+    const effectiveMapConfig = useMemo(() => {
+        if (socket.activeSimId && socket.mapConfig?.mapId === selectedMapId) return socket.mapConfig;
+        return previewMapConfig;
+    }, [previewMapConfig, selectedMapId, socket.activeSimId, socket.mapConfig]);
+    const mapChangeDisabled = Boolean(socket.activeSimId) || socket.simulationStatus === 'running' || socket.isStartingSimulation;
+    const activeMapId = socket.activeSimId ? socket.mapConfig?.mapId ?? selectedMapId : null;
     const validDraftOrders = draftOrders.filter(order => (
         order.orderId.trim()
         && order.pickup
@@ -104,7 +121,7 @@ export default function GcsDashboard() {
                             : '';
 
     useEffect(() => {
-        const buildingUrl = socket.mapConfig?.buildingGeoJsonUrl ?? '/maps/hanoi_my_dinh_me_tri/buildings.geojson';
+        const buildingUrl = effectiveMapConfig?.buildingGeoJsonUrl ?? selectedMapPreset.buildingGeoJsonUrl ?? '/maps/hanoi_my_dinh_me_tri_large/buildings.geojson';
         let cancelled = false;
         setBuildings(null);
         setBuildingLoadStatus('loading');
@@ -123,7 +140,40 @@ export default function GcsDashboard() {
         return () => {
             cancelled = true;
         };
-    }, [addLocalEvent, socket.mapConfig?.buildingGeoJsonUrl]);
+    }, [addLocalEvent, effectiveMapConfig?.buildingGeoJsonUrl, selectedMapPreset.buildingGeoJsonUrl]);
+
+    useEffect(() => {
+        if (!socket.activeSimId) {
+            windShadowRequestedSimRef.current = null;
+            return;
+        }
+        if (!layers.windShadow || windShadowRequestedSimRef.current === socket.activeSimId) return;
+        windShadowRequestedSimRef.current = socket.activeSimId;
+        socket.requestWindShadow();
+    }, [layers.windShadow, socket]);
+
+    useEffect(() => {
+        const mapId = socket.mapConfig?.mapId;
+        if (socket.activeSimId && mapId && mapId in PRESET_PREVIEW_MAP_CONFIGS && mapId !== selectedMapId) {
+            setSelectedMapId(mapId as MapPresetId);
+        }
+    }, [selectedMapId, socket.activeSimId, socket.mapConfig?.mapId]);
+
+    useEffect(() => {
+        const latest = socket.eventLogs[0];
+        if (!latest) return;
+        const code = String(latest.code ?? '');
+        const message = String(latest.message ?? '');
+        const isMapCacheError = code === 'MAP_CACHE_MISSING' || /cache missing|map cache/i.test(message);
+        if (!isMapCacheError) return;
+        const key = `${latest.timestamp ?? ''}-${code}-${message}`;
+        if (lastMapErrorKeyRef.current === key) return;
+        lastMapErrorKeyRef.current = key;
+        setCommandFeedback({
+            tone: 'error',
+            message: 'Không tải được cache bản đồ. Kiểm tra mapId hoặc build cache.'
+        });
+    }, [socket.eventLogs]);
 
     const setTemporaryFeedback = useCallback((tone: AsyncRequestStatus, message: string) => {
         setCommandFeedback({ tone, message });
@@ -131,6 +181,34 @@ export default function GcsDashboard() {
             window.setTimeout(() => setCommandFeedback(null), SUCCESS_CLEAR_MS);
         }
     }, []);
+
+    const handleSelectMap = useCallback((nextMapId: MapPresetId) => {
+        if (mapChangeDisabled) {
+            setTemporaryFeedback('warning', 'Dừng/đặt lại mô phỏng trước khi đổi bản đồ.');
+            return;
+        }
+        if (nextMapId === selectedMapId) {
+            setMapSelectorOpen(false);
+            return;
+        }
+        const nextPreset = MAP_PRESET_OPTIONS.find(option => option.mapId === nextMapId);
+        setSelectedMapId(nextMapId);
+        setBuildings(null);
+        setBuildingLoadStatus('loading');
+        setDraftOrders([]);
+        setDraftOrder(createDraftOrder());
+        setSelectedOrderId(null);
+        setSelectedMissionId(null);
+        setDynamicObstacles([]);
+        setDynamicNoFlyZones([]);
+        setEventFilter('all');
+        setMapInteractionMode('none');
+        setImportError(null);
+        socket.setSelectedDroneId(null);
+        telemetryHistory.resetHistory();
+        addLocalEvent('info', 'MAP_PRESET_SELECTED', `Đã chọn bản đồ ${nextPreset?.label ?? nextMapId}.`);
+        setMapSelectorOpen(false);
+    }, [addLocalEvent, mapChangeDisabled, selectedMapId, setTemporaryFeedback, socket, telemetryHistory]);
 
     const handleWeatherChange = useCallback((key: keyof WeatherState, value: number | boolean) => {
         setWeather(prev => ({ ...prev, [key]: value }));
@@ -255,7 +333,7 @@ export default function GcsDashboard() {
             return false;
         }
         const normalizedDroneCount = clampDroneCount(droneCount);
-        if (!socket.startSimulation({ droneCount: normalizedDroneCount, orderBatch: validDraftOrders })) {
+        if (!socket.startSimulation({ mapId: selectedMapId, droneCount: normalizedDroneCount, orderBatch: validDraftOrders })) {
             return false;
         }
         setDroneCount(normalizedDroneCount);
@@ -263,7 +341,7 @@ export default function GcsDashboard() {
         setTemporaryFeedback('success', 'Đã gửi yêu cầu bắt đầu mô phỏng.');
         addLocalEvent('info', 'ORDER_FIRST_START_REQUESTED', `Bắt đầu mô phỏng với ${validDraftOrders.length} đơn hàng.`);
         return true;
-    }, [addLocalEvent, canStartWithOrders, droneCount, setTemporaryFeedback, socket, startHint, validDraftOrders]);
+    }, [addLocalEvent, canStartWithOrders, droneCount, selectedMapId, setTemporaryFeedback, socket, startHint, validDraftOrders]);
 
     const handleDroneCountChange = useCallback((value: number) => {
         setDroneCount(clampDroneCount(value));
@@ -445,7 +523,7 @@ export default function GcsDashboard() {
                     <main className="min-h-0 min-w-0 flex-1">
                         <UavMap
                             buildings={buildings}
-                            mapConfig={socket.mapConfig}
+                            mapConfig={effectiveMapConfig}
                             drones={socket.drones}
                             orders={socket.orders}
                             missions={socket.missions}
@@ -504,7 +582,12 @@ export default function GcsDashboard() {
                     missions={socket.missions}
                     draftOrder={draftOrder}
                     draftOrders={draftOrders}
-                    mapConfig={socket.mapConfig}
+                    mapConfig={effectiveMapConfig}
+                    selectedMapId={selectedMapId}
+                    selectedMapLabel={selectedMapPreset.label}
+                    activeMapId={activeMapId}
+                    onOpenMapSelector={() => setMapSelectorOpen(true)}
+                    mapChangeDisabled={mapChangeDisabled}
                     selectedOrderId={selectedOrderId}
                     selectedMissionId={selectedMissionId}
                     eventFilter={eventFilter}
@@ -548,6 +631,15 @@ export default function GcsDashboard() {
                     onToggleCollapsed={() => setRightPanelCollapsed(prev => !prev)}
                 />
             </div>
+            <MapSelectorModal
+                open={mapSelectorOpen}
+                selectedMapId={selectedMapId}
+                activeMapId={activeMapId}
+                disabled={mapChangeDisabled}
+                simulationRunning={socket.simulationStatus === 'running'}
+                onClose={() => setMapSelectorOpen(false)}
+                onSelectMap={handleSelectMap}
+            />
         </div>
     );
 }

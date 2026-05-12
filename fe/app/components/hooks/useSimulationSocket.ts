@@ -28,11 +28,13 @@ import type {
     WorkerStatus
 } from '../types/simulation';
 
-type StartSimulationInput = number | {
+type StartSimulationOptions = {
     droneCount: number;
     orderBatch?: unknown[];
     mapId?: string;
 };
+
+type StartSimulationInput = number | StartSimulationOptions;
 
 const MAX_EVENT_LOGS = 200;
 const WIND_SHADOW_MAX_POINTS = 400;
@@ -186,7 +188,7 @@ export function useSimulationSocket() {
     const startSimulation = useCallback((input: StartSimulationInput = 1) => {
         const droneCount = clampDroneCount(typeof input === 'number' ? input : input.droneCount);
         const orderBatch = typeof input === 'number' ? undefined : input.orderBatch;
-        const mapId = typeof input === 'number' ? 'hanoi_my_dinh_me_tri' : input.mapId ?? 'hanoi_my_dinh_me_tri';
+        const mapId = typeof input === 'number' ? 'hanoi_my_dinh_me_tri_large' : input.mapId ?? 'hanoi_my_dinh_me_tri_large';
         const sent = sendJson({
             type: 'request_start_simulation',
             payload: {
@@ -391,18 +393,26 @@ export function useSimulationSocket() {
                 if (!isCurrentSimulationMessage(data.simId)) return;
                 const payload = data.payload ?? {};
                 const droneId = data.droneId ?? payload.droneId ?? null;
+                const code = payload.code ?? 'UNKNOWN';
+                const message = payload.message ?? '';
                 setEventLogs(prev => [
                     {
                         droneId,
                         orderId: payload.orderId ?? payload.order_id ?? null,
                         missionId: payload.missionId ?? payload.mission_id ?? null,
                         level: payload.level ?? 'info',
-                        code: payload.code ?? 'UNKNOWN',
-                        message: payload.message ?? '',
+                        code,
+                        message,
                         timestamp: data.timestamp ?? Date.now()
                     },
                     ...prev
                 ].slice(0, MAX_EVENT_LOGS));
+                if (code === 'MAP_CACHE_MISSING' || /cache missing|map cache/i.test(String(message))) {
+                    setSimulationStatus('failed');
+                    activeSimIdRef.current = null;
+                    setActiveSimId(null);
+                    clearPendingStart();
+                }
             }
         };
 

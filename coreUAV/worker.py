@@ -16,7 +16,7 @@ from statuses import DroneStatus, EventCode, EventLevel
 WS_URL = "ws://localhost:8080"
 SYSTEM_DRONE_ID = "system"
 DEFAULT_TELEMETRY_EVERY_N_STEPS = 5
-DEFAULT_MAP_ID = "hanoi_my_dinh_me_tri"
+DEFAULT_MAP_ID = "hanoi_my_dinh_me_tri_large"
 DEFAULT_DEMO_DRONES = 5
 DEFAULT_MAX_DEMO_DRONES = 15
 DEFAULT_WIND_SHADOW_MAX_POINTS = 400
@@ -60,9 +60,13 @@ def config_for_map(base_config, requested_map_id=None):
     if preset:
         map_config["map_id"] = preset.get("mapId", map_id)
         map_config["label"] = preset.get("label", map_config.get("label", map_id))
-        for key in ("start_latlng", "goal_latlng", "charging_stations_latlng", "no_fly_zones", "safe_order_points", "building_geojson_url"):
+        for key in ("start_latlng", "goal_latlng", "charging_stations_latlng", "no_fly_zones", "safe_order_points", "building_geojson_url", "bounds"):
             if key in preset:
                 map_config[key] = copy.deepcopy(preset[key])
+        if "grid_resolution" in preset:
+            next_config.setdefault("performance", {})["grid_resolution"] = float(preset["grid_resolution"])
+        if "altitude_levels" in preset:
+            next_config.setdefault("performance", {})["altitude_levels"] = copy.deepcopy(preset["altitude_levels"])
     else:
         map_config["map_id"] = map_id
     return next_config

@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 export type LatLng = [number, number];
 
@@ -9,8 +9,39 @@ export type MapBounds = {
     east: number;
 };
 
+export type MapPresetId = 'hanoi_my_dinh_me_tri' | 'hanoi_my_dinh_me_tri_large';
+
+export type MapPresetOption = {
+    mapId: MapPresetId;
+    label: string;
+    description: string;
+    sizeLabel: string;
+    recommendedUse: string;
+    buildingGeoJsonUrl: string;
+};
+
 export const DEFAULT_DEMO_DRONE_COUNT = 5;
 export const MAX_DEMO_DRONE_COUNT = 15;
+export const DEFAULT_MAP_PRESET_ID: MapPresetId = 'hanoi_my_dinh_me_tri_large';
+
+export const MAP_PRESET_OPTIONS: MapPresetOption[] = [
+    {
+        mapId: 'hanoi_my_dinh_me_tri',
+        label: 'Mỹ Đình - Mễ Trì',
+        description: 'Vùng tiêu chuẩn cho demo nhanh và ít đơn.',
+        sizeLabel: 'Standard',
+        recommendedUse: '1-5 UAV, 5-20 đơn',
+        buildingGeoJsonUrl: '/maps/hanoi_my_dinh_me_tri/buildings.geojson'
+    },
+    {
+        mapId: 'hanoi_my_dinh_me_tri_large',
+        label: 'Mỹ Đình - Mễ Trì Large',
+        description: 'Vùng lớn khoảng x9.5 diện tích, phù hợp demo nhiều đơn.',
+        sizeLabel: 'Large',
+        recommendedUse: '5-15 UAV, 50-100 đơn',
+        buildingGeoJsonUrl: '/maps/hanoi_my_dinh_me_tri_large/buildings.geojson'
+    }
+];
 
 export type ServerStatus = 'connecting' | 'connected' | 'disconnected';
 export type WorkerStatus = 'idle' | 'busy' | 'disconnected' | 'error' | 'unknown';
@@ -73,6 +104,101 @@ export type MapConfig = {
     drones?: { droneId: string; start: LatLng; goal: LatLng }[];
 };
 
+export const PRESET_PREVIEW_MAP_CONFIGS: Record<MapPresetId, MapConfig> = {
+    hanoi_my_dinh_me_tri: {
+        mapId: 'hanoi_my_dinh_me_tri',
+        mapLabel: 'Mỹ Đình - Mễ Trì',
+        buildingGeoJsonUrl: '/maps/hanoi_my_dinh_me_tri/buildings.geojson',
+        bounds: {
+            south: 21.0128,
+            west: 105.7798,
+            north: 21.0211,
+            east: 105.7912
+        },
+        start: [21.0163, 105.7840],
+        goal: [21.0192, 105.7892],
+        depot: [21.0163, 105.7840],
+        simulationMode: 'order_dispatch',
+        hasFixedGoal: false,
+        charging_stations: [
+            [21.0147, 105.7819],
+            [21.0180, 105.7867]
+        ],
+        no_fly_zones: [
+            { center: [21.0169, 105.7835], radius: 55.0 },
+            { center: [21.0177, 105.7872], radius: 45.0 }
+        ],
+        safeOrderPoints: [
+            [21.0142, 105.7814],
+            [21.0148, 105.7854],
+            [21.0162, 105.7890],
+            [21.0187, 105.7894],
+            [21.0194, 105.7856],
+            [21.0175, 105.7815],
+            [21.0129, 105.7833],
+            [21.0201, 105.7876]
+        ]
+    },
+    hanoi_my_dinh_me_tri_large: {
+        mapId: 'hanoi_my_dinh_me_tri_large',
+        mapLabel: 'Mỹ Đình - Mễ Trì Large',
+        buildingGeoJsonUrl: '/maps/hanoi_my_dinh_me_tri_large/buildings.geojson',
+        bounds: {
+            south: 21.0037,
+            west: 105.7680,
+            north: 21.0292,
+            east: 105.8015
+        },
+        start: [21.0068, 105.7722],
+        goal: [21.0266, 105.7972],
+        depot: [21.0068, 105.7722],
+        simulationMode: 'order_dispatch',
+        hasFixedGoal: false,
+        charging_stations: [
+            [21.0068, 105.7722],
+            [21.0147, 105.7819],
+            [21.0184, 105.7918],
+            [21.0254, 105.7956]
+        ],
+        no_fly_zones: [
+            { center: [21.0169, 105.7835], radius: 90.0 },
+            { center: [21.0218, 105.7908], radius: 120.0 },
+            { center: [21.0092, 105.7775], radius: 85.0 }
+        ],
+        safeOrderPoints: [
+            [21.0058, 105.7708],
+            [21.0064, 105.7768],
+            [21.0072, 105.7832],
+            [21.0069, 105.7901],
+            [21.0080, 105.7975],
+            [21.0109, 105.7715],
+            [21.0118, 105.7792],
+            [21.0126, 105.7864],
+            [21.0116, 105.7937],
+            [21.0125, 105.7992],
+            [21.0152, 105.7696],
+            [21.0142, 105.7814],
+            [21.0148, 105.7854],
+            [21.0162, 105.7890],
+            [21.0158, 105.7970],
+            [21.0187, 105.7724],
+            [21.0175, 105.7815],
+            [21.0194, 105.7856],
+            [21.0187, 105.7894],
+            [21.0190, 105.7990],
+            [21.0219, 105.7706],
+            [21.0228, 105.7778],
+            [21.0235, 105.7848],
+            [21.0248, 105.7932],
+            [21.0242, 105.7994],
+            [21.0270, 105.7726],
+            [21.0275, 105.7797],
+            [21.0268, 105.7867],
+            [21.0272, 105.7939],
+            [21.0278, 105.8002]
+        ]
+    }
+};
 export type EventLogEntry = {
     timestamp?: number;
     droneId?: string | null;
@@ -272,7 +398,8 @@ export const DEFAULT_LAYER_TOGGLES: LayerToggles = {
     pathHistory: true,
     dynamicObstacles: true,
     orders: true,
-    windShadow: false,
+    windShadow: true,
     sensorRange: true,
-    weatherOverlay: false
+    weatherOverlay: true,
 };
+

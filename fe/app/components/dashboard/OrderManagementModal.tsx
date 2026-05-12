@@ -60,6 +60,18 @@ const LOCAL_SAFE_ORDER_POINTS_BY_MAP: Record<string, LatLng[]> = {
         [21.0175, 105.7815],
         [21.0129, 105.7833],
         [21.0201, 105.7876]
+    ],
+    hanoi_my_dinh_me_tri_large: [
+        [21.0058, 105.7708],
+        [21.0064, 105.7768],
+        [21.0072, 105.7832],
+        [21.0109, 105.7715],
+        [21.0126, 105.7864],
+        [21.0158, 105.7970],
+        [21.0187, 105.7724],
+        [21.0194, 105.7856],
+        [21.0248, 105.7932],
+        [21.0278, 105.8002]
     ]
 };
 
@@ -204,43 +216,41 @@ function randomUsablePoint(
     return null;
 }
 
-function midpoint(a: LatLng, b: LatLng): LatLng {
-    return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+function shuffleItems<T>(items: T[]) {
+    const shuffled = [...items];
+    for (let idx = shuffled.length - 1; idx > 0; idx -= 1) {
+        const swapIdx = randomIndex(idx + 1);
+        [shuffled[idx], shuffled[swapIdx]] = [shuffled[swapIdx], shuffled[idx]];
+    }
+    return shuffled;
 }
 
-function isReasonableDemoPoint(point: LatLng, mapConfig: MapConfig | null) {
-    if (!isFiniteLatLng(point)) return false;
-    if (!mapConfig) return true;
-
-    const start = mapConfig.start ?? mapConfig.depot;
-    const goal = mapConfig.goal ?? start;
-    if (!start || !goal) return true;
-
-    const demoCenter = midpoint(start, goal);
-    const mapSpan = distanceMeters(start, goal);
-    const maxRadius = Math.max(450, Math.min(550, mapSpan * 0.56));
-    return distanceMeters(point, demoCenter) <= maxRadius;
-}
-
-function safeDemoPoints(mapConfig: MapConfig | null, dynamicNoFlyZones: DynamicNoFlyZone[] = []) {
+function getPathFriendlyOrderPoints(
+    mapConfig: MapConfig | null,
+    dynamicNoFlyZones: DynamicNoFlyZone[] = []
+) {
+    const bounds = normalizeBounds(mapConfig);
     const noFlyZones = [...(mapConfig?.no_fly_zones ?? []), ...dynamicNoFlyZones];
-    const localFallback = LOCAL_SAFE_ORDER_POINTS_BY_MAP[mapConfig?.mapId ?? 'hanoi_my_dinh_me_tri']
-        ?? LOCAL_SAFE_ORDER_POINTS_BY_MAP.hanoi_my_dinh_me_tri;
+    const localFallback = LOCAL_SAFE_ORDER_POINTS_BY_MAP[mapConfig?.mapId ?? 'hanoi_my_dinh_me_tri_large']
+        ?? LOCAL_SAFE_ORDER_POINTS_BY_MAP.hanoi_my_dinh_me_tri_large;
     const sourcePoints = mapConfig?.safeOrderPoints && mapConfig.safeOrderPoints.length >= 2
         ? mapConfig.safeOrderPoints
         : localFallback;
     const filtered = sourcePoints.filter(point => (
         isFiniteLatLng(point)
-        && isReasonableDemoPoint(point, mapConfig)
+        && isPointInsideBounds(point, bounds)
         && !isInsideNoFlyZone(point, noFlyZones)
     ));
     if (filtered.length >= 2) return filtered;
 
-    return sourcePoints.filter(point => isFiniteLatLng(point) && !isInsideNoFlyZone(point, noFlyZones));
+    return localFallback.filter(point => (
+        isFiniteLatLng(point)
+        && isPointInsideBounds(point, bounds)
+        && !isInsideNoFlyZone(point, noFlyZones)
+    ));
 }
 
-function fallbackOrderPair(mapConfig: MapConfig | null, dynamicNoFlyZones: DynamicNoFlyZone[] = []) {
-    const points = safeDemoPoints(mapConfig, dynamicNoFlyZones).filter(isFiniteLatLng);
+function eligibleOrderPairs(points: LatLng[]) {
     const eligiblePairs: Array<[LatLng, LatLng]> = [];
     points.forEach((pickup, pickupIndex) => {
         points.forEach((dropoff, dropoffIndex) => {
@@ -249,8 +259,7 @@ function fallbackOrderPair(mapConfig: MapConfig | null, dynamicNoFlyZones: Dynam
             }
         });
     });
-    if (eligiblePairs.length === 0) return null;
-    return eligiblePairs[randomIndex(eligiblePairs.length)];
+    return shuffleItems(eligiblePairs);
 }
 
 function createRandomOrders(
@@ -261,28 +270,31 @@ function createRandomOrders(
     const safeCount = clampOrderCount(count);
     const timestamp = Date.now();
     const bounds = normalizeBounds(mapConfig);
+    const pathFriendlyPairs = eligibleOrderPairs(getPathFriendlyOrderPoints(mapConfig, dynamicNoFlyZones));
     const orders: DraftOrder[] = [];
 
     for (let idx = 0; idx < safeCount; idx += 1) {
         let pair: [LatLng, LatLng] | null = null;
+        if (pathFriendlyPairs.length > 0) {
+            pair = pathFriendlyPairs[idx % pathFriendlyPairs.length];
+        }
         if (bounds) {
-            for (let attempt = 0; attempt < RANDOM_ORDER_MAX_ATTEMPTS; attempt += 1) {
-                const pickup = randomUsablePoint(mapConfig, bounds, dynamicNoFlyZones);
-                const dropoff = randomUsablePoint(mapConfig, bounds, dynamicNoFlyZones);
-                if (
-                    pickup
-                    && dropoff
-                    && distanceMeters(pickup, dropoff) >= MIN_PICKUP_DROPOFF_DISTANCE_METERS
-                ) {
-                    pair = [pickup, dropoff];
-                    break;
+            if (!pair) {
+                for (let attempt = 0; attempt < RANDOM_ORDER_MAX_ATTEMPTS; attempt += 1) {
+                    const pickup = randomUsablePoint(mapConfig, bounds, dynamicNoFlyZones);
+                    const dropoff = randomUsablePoint(mapConfig, bounds, dynamicNoFlyZones);
+                    if (
+                        pickup
+                        && dropoff
+                        && distanceMeters(pickup, dropoff) >= MIN_PICKUP_DROPOFF_DISTANCE_METERS
+                    ) {
+                        pair = [pickup, dropoff];
+                        break;
+                    }
                 }
             }
         }
 
-        if (!pair) {
-            pair = fallbackOrderPair(mapConfig, dynamicNoFlyZones);
-        }
         if (!pair) continue;
 
         orders.push({
@@ -522,7 +534,6 @@ export default function OrderManagementModal({
                             <Section title="Tạo ngẫu nhiên đơn hàng">
                                 <div className="space-y-3">
                                     <div className="rounded border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">
-                                        <p>Tạo đơn ngẫu nhiên trong vùng bản đồ hiện tại.</p>
                                         <p className="mt-1">Tối đa {MAX_RANDOM_ORDER_COUNT} đơn/lần.</p>
                                     </div>
                                     <NumberInput
@@ -541,8 +552,8 @@ export default function OrderManagementModal({
                                                 onAddDraftOrders(orders);
                                             }
                                             if (orders.length === requestedCount) {
-                                                setSuccessFeedback(`Đã tạo ${orders.length} đơn ngẫu nhiên trong vùng bản đồ hiện tại.`);
-                                                setRandomHint(`Đã tạo ${orders.length} đơn ngẫu nhiên trong vùng bản đồ hiện tại.`);
+                                                setSuccessFeedback(`Đã tạo ${orders.length} đơn ngẫu nhiên`);
+                                                setRandomHint(`Đã tạo ${orders.length} đơn ngẫu nhiên`);
                                                 return;
                                             }
                                             if (orders.length > 0) {

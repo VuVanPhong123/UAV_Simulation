@@ -182,6 +182,15 @@ class SimulationWorld:
             errors.append(f"{field_name} could not be mapped to graph: {exc}")
             return None
         if not self.graph.is_node_clear_at_altitude(node, altitude):
+            clear_node = self.graph.find_nearest_clear_node(value, altitude, max_radius_cells=8)
+            if clear_node != node and self.graph.is_node_clear_at_altitude(clear_node, altitude):
+                self.queue_event(
+                    "system",
+                    EventLevel.WARNING.value,
+                    EventCode.ORDER_STATE_UPDATED.value,
+                    f"{field_name} snapped from blocked node {node} to nearest clear node {clear_node}.",
+                )
+                return clear_node
             errors.append(f"{field_name} maps to blocked node {node} at altitude {altitude}.")
             return node
         return node
@@ -304,6 +313,14 @@ class SimulationWorld:
                 agent.drone.node = self._current_grid_node(agent)
             raw_pickup_path = self._plan_path(agent.drone.node, order.pickup_node, agent.drone.altitude)
             pickup_path = self.graph.smooth_path(raw_pickup_path, agent.drone.altitude) if raw_pickup_path else []
+            if not pickup_path:
+                self.queue_event(
+                    agent.drone_id,
+                    EventLevel.WARNING.value,
+                    EventCode.DISPATCH_NO_DRONE_AVAILABLE.value,
+                    f"Dispatch skipped for order {order.order_id}: no current safe path to pickup.",
+                )
+                continue
 
             now = self._now_ms()
             mission_id = self._next_mission_id()
@@ -331,18 +348,6 @@ class SimulationWorld:
             agent.available = False
             agent.current_target_node = order.pickup_node
             agent.current_target_type = "pickup"
-
-            if not pickup_path:
-                self._fail_current_mission(agent, "No safe path to pickup.")
-                self.queue_event(
-                    agent.drone_id,
-                    EventLevel.ERROR.value,
-                    EventCode.DISPATCH_FAILED.value,
-                    f"Dispatch failed for order {order.order_id}: no safe path to pickup.",
-                )
-                changed_orders.append(serialize_order(order))
-                changed_missions.append(serialize_mission(mission))
-                continue
 
             agent.path = pickup_path
             agent.path_index = 0

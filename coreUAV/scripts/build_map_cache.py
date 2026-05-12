@@ -59,9 +59,14 @@ def config_for_map(config, map_id):
     if preset:
         map_config["map_id"] = preset.get("mapId", map_id)
         map_config["label"] = preset.get("label", map_config.get("label", map_id))
-        for key in ("start_latlng", "goal_latlng", "charging_stations_latlng", "no_fly_zones", "safe_order_points", "building_geojson_url"):
+        for key in ("start_latlng", "goal_latlng", "charging_stations_latlng", "no_fly_zones", "safe_order_points", "building_geojson_url", "bounds"):
             if key in preset:
                 map_config[key] = copy.deepcopy(preset[key])
+        if "grid_resolution" in preset:
+            map_config["grid_resolution"] = float(preset["grid_resolution"])
+            next_config.setdefault("performance", {})["grid_resolution"] = float(preset["grid_resolution"])
+        if "altitude_levels" in preset:
+            next_config.setdefault("performance", {})["altitude_levels"] = copy.deepcopy(preset["altitude_levels"])
     else:
         map_config["map_id"] = map_id
     return next_config
@@ -74,6 +79,24 @@ def nearest_node(latlng, transformer, min_x, min_y, resolution, cols, rows):
     i = max(0, min(cols - 1, i))
     j = max(0, min(rows - 1, j))
     return [i, j]
+
+
+def bounds_from_config(map_config):
+    bounds = map_config.get("bounds")
+    if not bounds:
+        return None
+    south = float(bounds["south"])
+    west = float(bounds["west"])
+    north = float(bounds["north"])
+    east = float(bounds["east"])
+    if not (south < north and west < east):
+        raise ValueError(f"invalid bounds for map_id={map_config.get('map_id')}: {bounds}")
+    return {
+        "south": south,
+        "west": west,
+        "north": north,
+        "east": east,
+    }
 
 
 def build_cache(map_id):
@@ -90,16 +113,31 @@ def build_cache(map_id):
     transformer = Transformer.from_crs("epsg:4326", crs_utm, always_xy=True)
 
     print("[CACHE] Building grid...")
-    pts_gps = [config["map"]["start_latlng"], config["map"]["goal_latlng"]]
-    pts_gps.extend(config["map"].get("charging_stations_latlng", []))
-    pts_utm = [transformer.transform(lon, lat) for lat, lon in pts_gps]
-    xs = [p[0] for p in pts_utm]
-    ys = [p[1] for p in pts_utm]
-    pad = 200
-    min_x, max_x = min(xs) - pad, max(xs) + pad
-    min_y, max_y = min(ys) - pad, max(ys) + pad
+    bounds = bounds_from_config(config["map"])
+    if bounds:
+        corners_gps = [
+            (bounds["south"], bounds["west"]),
+            (bounds["south"], bounds["east"]),
+            (bounds["north"], bounds["west"]),
+            (bounds["north"], bounds["east"]),
+        ]
+        pts_utm = [transformer.transform(lon, lat) for lat, lon in corners_gps]
+        xs = [p[0] for p in pts_utm]
+        ys = [p[1] for p in pts_utm]
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+    else:
+        pts_gps = [config["map"]["start_latlng"], config["map"]["goal_latlng"]]
+        pts_gps.extend(config["map"].get("charging_stations_latlng", []))
+        pts_utm = [transformer.transform(lon, lat) for lat, lon in pts_gps]
+        xs = [p[0] for p in pts_utm]
+        ys = [p[1] for p in pts_utm]
+        pad = 200
+        min_x, max_x = min(xs) - pad, max(xs) + pad
+        min_y, max_y = min(ys) - pad, max(ys) + pad
     cols = int(np.ceil((max_x - min_x) / resolution))
     rows = int(np.ceil((max_y - min_y) / resolution))
+    print(f"[CACHE] Grid {cols}x{rows} at {resolution:.1f}m")
 
     print("[CACHE] Computing height grid...")
     height_grid = np.zeros((rows, cols), dtype=np.float32)
@@ -149,6 +187,7 @@ def build_cache(map_id):
         "noFlyZones": config.get("map", {}).get("no_fly_zones", []),
         "safeOrderPoints": config["map"].get("safe_order_points", []),
         "buildingGeoJsonUrl": config["map"].get("building_geojson_url", f"/maps/{map_id}/buildings.geojson"),
+        "bounds": bounds,
         "resolution": resolution,
         "minX": float(min_x),
         "minY": float(min_y),
@@ -169,7 +208,7 @@ def build_cache(map_id):
 
 def main():
     parser = argparse.ArgumentParser(description="Build static map cache for UAV runtime.")
-    parser.add_argument("--map-id", default="hanoi_my_dinh_me_tri")
+    parser.add_argument("--map-id", default="hanoi_my_dinh_me_tri_large")
     args = parser.parse_args()
     try:
         build_cache(args.map_id)

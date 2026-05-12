@@ -1,8 +1,8 @@
-'use client';
+﻿'use client';
 
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
-import { useMapEvents } from 'react-leaflet';
+import { useMap, useMapEvents } from 'react-leaflet';
 import type { Feature, FeatureCollection, GeoJsonObject, GeoJsonProperties, Geometry } from 'geojson';
 import type { Layer } from 'leaflet';
 import MapEvents from './MapEvents';
@@ -20,6 +20,7 @@ import type {
     LayerToggles,
     MapInteractionMode,
     MapConfig,
+    MapBounds,
     MissionsById,
     OrdersById,
     PathHistoryByDrone,
@@ -39,8 +40,9 @@ const Pane = dynamic(() => import('react-leaflet').then(mod => mod.Pane), { ssr:
 const MAX_WIND_SHADOW_POINTS = 400;
 const MAX_RENDERED_PLANNED_PATH_POINTS = 250;
 const MAX_RENDERED_HISTORY_POINTS = 200;
-const BUILDING_LABEL_ZOOM_THRESHOLD = 17;
+const BUILDING_LABEL_ZOOM_THRESHOLD = 16;
 const MAX_BUILDING_LABELS = 250;
+const MIN_BUILDING_LABEL_HEIGHT = 20;
 
 type UavMapProps = {
     buildings: GeoJsonObject | null;
@@ -83,6 +85,53 @@ function MapZoomObserver({ onZoomChange }: { onZoomChange: (zoom: number) => voi
     return null;
 }
 
+function isValidBounds(bounds: MapBounds | null | undefined): bounds is MapBounds {
+    return Boolean(
+        bounds
+        && Number.isFinite(bounds.south)
+        && Number.isFinite(bounds.west)
+        && Number.isFinite(bounds.north)
+        && Number.isFinite(bounds.east)
+        && bounds.south < bounds.north
+        && bounds.west < bounds.east
+        && bounds.south >= -90
+        && bounds.north <= 90
+        && bounds.west >= -180
+        && bounds.east <= 180
+    );
+}
+
+function MapBoundsController({ mapConfig, center }: { mapConfig: MapConfig | null; center: LatLng }) {
+    const map = useMap();
+    const lastAppliedBoundsKeyRef = useRef<string | null>(null);
+    const mapId = mapConfig?.mapId ?? 'unknown';
+    const bounds = mapConfig?.bounds;
+    const centerLat = center[0];
+    const centerLng = center[1];
+    const boundsKey = isValidBounds(bounds)
+        ? `${mapId}:bounds:${bounds.south.toFixed(6)}:${bounds.west.toFixed(6)}:${bounds.north.toFixed(6)}:${bounds.east.toFixed(6)}`
+        : `${mapId}:center:${centerLat.toFixed(6)}:${centerLng.toFixed(6)}`;
+
+    useEffect(() => {
+        if (lastAppliedBoundsKeyRef.current === boundsKey) return;
+        lastAppliedBoundsKeyRef.current = boundsKey;
+
+        if (isValidBounds(bounds)) {
+            map.fitBounds(
+                [
+                    [bounds.south, bounds.west],
+                    [bounds.north, bounds.east]
+                ],
+                { padding: [28, 28], animate: false }
+            );
+            return;
+        }
+        map.setView([centerLat, centerLng], map.getZoom() || BUILDING_LABEL_ZOOM_THRESHOLD, { animate: false });
+    }, [boundsKey, centerLat, centerLng, map]);
+
+    return null;
+}
+
 function buildingHeight(feature: Feature<Geometry, GeoJsonProperties>) {
     const value = feature.properties?.estimated_height;
     const height = typeof value === 'number' ? value : Number(value);
@@ -119,7 +168,7 @@ export default function UavMap({
     onSelectDrone,
     onSelectOrder
 }: UavMapProps) {
-    const defaultCenter: LatLng = [21.0163, 105.7840];
+    const defaultCenter: LatLng = [21.0068, 105.7722];
     const depot = mapConfig?.depot ?? mapConfig?.start ?? defaultCenter;
     const hasFixedGoal = mapConfig?.hasFixedGoal !== false && mapConfig?.simulationMode !== 'order_dispatch';
     const mapCenter = mapConfig ? depot : defaultCenter;
@@ -131,23 +180,25 @@ export default function UavMap({
         return samplePolylinePositions(windShadowZones, MAX_WIND_SHADOW_POINTS);
     }, [layers.windShadow, windShadowZones]);
     const selectedPlannedPath = selectedDroneId ? plannedPaths[selectedDroneId] ?? [] : [];
-    const selectedPathHistory = selectedDroneId ? pathHistoryByDrone[selectedDroneId] ?? [] : [];
     const renderedPlannedPath = useMemo(
         () => samplePolylinePositions(selectedPlannedPath, MAX_RENDERED_PLANNED_PATH_POINTS),
         [selectedPlannedPath]
     );
-    const renderedPathHistory = useMemo(
-        () => samplePolylinePositions(selectedPathHistory, MAX_RENDERED_HISTORY_POINTS),
-        [selectedPathHistory]
+    const renderedPathHistories = useMemo(
+        () => Object.entries(pathHistoryByDrone)
+            .map(([droneId, path]) => ({ droneId, path: samplePolylinePositions(path, MAX_RENDERED_HISTORY_POINTS) }))
+            .filter(item => item.path.length >= 2),
+        [pathHistoryByDrone]
     );
     const selectedMission = selectedMissionId ? missions[selectedMissionId] ?? null : null;
     const buildingData = useMemo(() => {
-        if (!buildings || !showBuildingLabels || buildings.type !== 'FeatureCollection') return buildings;
+        if (!buildings || buildings.type !== 'FeatureCollection') return buildings;
         const featureCollection = buildings as FeatureCollection<Geometry, GeoJsonProperties>;
+        const tallLabelCandidates = featureCollection.features
+            .map((feature, idx) => ({ idx, height: buildingHeight(feature as Feature<Geometry, GeoJsonProperties>) }))
+            .filter(item => item.height !== null && item.height > MIN_BUILDING_LABEL_HEIGHT);
         const allowed = new Set(
-            featureCollection.features
-                .map((feature, idx) => ({ idx, height: buildingHeight(feature as Feature<Geometry, GeoJsonProperties>) }))
-                .filter(item => item.height !== null)
+            tallLabelCandidates
                 .sort((a, b) => (b.height ?? 0) - (a.height ?? 0))
                 .slice(0, MAX_BUILDING_LABELS)
                 .map(item => item.idx)
@@ -159,7 +210,7 @@ export default function UavMap({
                 ...feature,
                 properties: {
                     ...(feature.properties ?? {}),
-                    __showHeightLabel: allowed.has(idx)
+                    __showHeightLabel: showBuildingLabels && allowed.has(idx)
                 }
             }))
         } satisfies FeatureCollection<Geometry, GeoJsonProperties>;
@@ -217,15 +268,8 @@ export default function UavMap({
                     Không tải được lớp tòa nhà.
                 </div>
             )}
-            {layers.buildingLabels && layers.buildings && buildingLoadStatus !== 'loading' && (
-                <div className="pointer-events-none absolute right-4 top-16 z-[500] max-w-xs rounded border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 shadow-sm">
-                    {showBuildingLabels
-                        ? `Đang hiển thị tối đa ${MAX_BUILDING_LABELS} nhãn độ cao.`
-                        : `Phóng to zoom >= ${BUILDING_LABEL_ZOOM_THRESHOLD} để xem nhãn độ cao tòa nhà.`}
-                </div>
-            )}
             <MapContainer
-                key={`map-${mapConfig?.mapId ?? 'hanoi_my_dinh_me_tri'}`}
+                key={`map-${mapConfig?.mapId ?? 'hanoi_my_dinh_me_tri_large'}`}
                 center={mapCenter}
                 zoom={17}
                 minZoom={13}
@@ -241,6 +285,7 @@ export default function UavMap({
                 className="h-full w-full z-10"
             >
                 <MapResizeController resizeKey={resizeKey} />
+                <MapBoundsController mapConfig={mapConfig} center={mapCenter} />
                 <MapZoomObserver onZoomChange={setCurrentZoom} />
                 <MapEvents onMapClick={onMapClick} />
                 <TileLayer
@@ -330,17 +375,17 @@ export default function UavMap({
                     />
                 )}
 
-                {layers.pathHistory && selectedDroneId && renderedPathHistory.length > 0 && (
+                {layers.pathHistory && renderedPathHistories.map(item => (
                     <Polyline
-                        key={`history-${selectedDroneId}`}
-                        positions={renderedPathHistory}
+                        key={`history-${item.droneId}`}
+                        positions={item.path}
                         pathOptions={{
-                            color: '#2563eb',
-                            weight: 3,
-                            opacity: 0.7
+                            color: item.droneId === selectedDroneId ? '#2563eb' : '#38bdf8',
+                            weight: item.droneId === selectedDroneId ? 4 : 2,
+                            opacity: item.droneId === selectedDroneId ? 0.8 : 0.35
                         }}
                     />
-                )}
+                ))}
 
                 {layers.windShadow && sampledZones.length === 0 && (
                     <div className="absolute right-4 top-50 z-[500] rounded border border-emerald-200 bg-white px-3 py-2 text-xs font-bold text-emerald-700 shadow-sm">
@@ -349,7 +394,7 @@ export default function UavMap({
                 )}
 
                 {layers.windShadow && sampledZones.map((pos, idx) => (
-                    <CircleMarker key={`shadow-${idx}`} center={pos} radius={2} pathOptions={{ color: '#22c55e', fillColor: '#22c55e', fillOpacity: 0.5 }} />
+                    <CircleMarker key={`shadow-${idx}`} center={pos} radius={2} pathOptions={{ color: '#86efac', fillColor: '#bbf7d0', fillOpacity: 0.18, opacity: 0.28 }} />
                 ))}
 
                 {layers.dynamicObstacles && dynamicObstacles.map((obstacle, idx) => {

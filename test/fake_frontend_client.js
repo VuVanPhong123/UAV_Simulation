@@ -321,7 +321,7 @@ async function runPerfProbe() {
     send({
       type: 'request_start_simulation',
       payload: {
-        mapId: 'hanoi_my_dinh_me_tri',
+        mapId: 'hanoi_my_dinh_me_tri_large',
         droneCount: count,
         orderBatch: makePerfOrders(count),
         autoDispatch: true,
@@ -402,7 +402,7 @@ async function runScenario() {
   send({
     type: 'request_start_simulation',
     payload: {
-      mapId: 'hanoi_my_dinh_me_tri',
+      mapId: 'hanoi_my_dinh_me_tri_large',
       droneCount: 1,
       orderBatch: [
         {
@@ -647,7 +647,7 @@ async function runScenario() {
   send({
     type: 'request_start_simulation',
     payload: {
-      mapId: 'hanoi_my_dinh_me_tri',
+      mapId: 'hanoi_my_dinh_me_tri_large',
       droneCount: 3,
       orderBatch: [
         {

@@ -1,31 +1,62 @@
-map:
-  map_id: hanoi_my_dinh_me_tri
-  label: "Mỹ Đình - Mễ Trì"
-  start_latlng: [21.0163, 105.7840]
-  goal_latlng: [21.0192, 105.7892]
+﻿map:
+  map_id: hanoi_my_dinh_me_tri_large
+  label: "My Dinh - Me Tri Large"
+  bounds:
+    south: 21.0037
+    west: 105.7680
+    north: 21.0292
+    east: 105.8015
+  start_latlng: [21.0068, 105.7722]
+  goal_latlng: [21.0266, 105.7972]
   charging_stations_latlng:
+    - [21.0068, 105.7722]
     - [21.0147, 105.7819]
-    - [21.0180, 105.7867]
+    - [21.0184, 105.7918]
+    - [21.0254, 105.7956]
   no_fly_zones:
     - center: [21.0169, 105.7835]
-      radius: 55.0
-    - center: [21.0177, 105.7872]
-      radius: 45.0
+      radius: 90.0
+    - center: [21.0218, 105.7908]
+      radius: 120.0
+    - center: [21.0092, 105.7775]
+      radius: 85.0
   safe_order_points:
+    - [21.0058, 105.7708]
+    - [21.0064, 105.7768]
+    - [21.0072, 105.7832]
+    - [21.0069, 105.7901]
+    - [21.0080, 105.7975]
+    - [21.0109, 105.7715]
+    - [21.0118, 105.7792]
+    - [21.0126, 105.7864]
+    - [21.0116, 105.7937]
+    - [21.0125, 105.7992]
+    - [21.0152, 105.7696]
     - [21.0142, 105.7814]
     - [21.0148, 105.7854]
     - [21.0162, 105.7890]
-    - [21.0187, 105.7894]
-    - [21.0194, 105.7856]
+    - [21.0158, 105.7970]
+    - [21.0187, 105.7724]
     - [21.0175, 105.7815]
-    - [21.0129, 105.7833]
-    - [21.0201, 105.7876]
-  building_geojson_url: "/maps/hanoi_my_dinh_me_tri/buildings.geojson"
+    - [21.0194, 105.7856]
+    - [21.0187, 105.7894]
+    - [21.0190, 105.7990]
+    - [21.0219, 105.7706]
+    - [21.0228, 105.7778]
+    - [21.0235, 105.7848]
+    - [21.0248, 105.7932]
+    - [21.0242, 105.7994]
+    - [21.0270, 105.7726]
+    - [21.0275, 105.7797]
+    - [21.0268, 105.7867]
+    - [21.0272, 105.7939]
+    - [21.0278, 105.8002]
+  building_geojson_url: "/maps/hanoi_my_dinh_me_tri_large/buildings.geojson"
   asset_radius_m: 700.0
   presets:
     hanoi_my_dinh_me_tri:
       mapId: hanoi_my_dinh_me_tri
-      label: "Mỹ Đình - Mễ Trì"
+      label: "My Dinh - Me Tri"
       start_latlng: [21.0163, 105.7840]
       goal_latlng: [21.0192, 105.7892]
       charging_stations_latlng:
@@ -46,7 +77,62 @@ map:
         - [21.0129, 105.7833]
         - [21.0201, 105.7876]
       building_geojson_url: "/maps/hanoi_my_dinh_me_tri/buildings.geojson"
-      asset_radius_m: 700.0
+      grid_resolution: 10.0
+    hanoi_my_dinh_me_tri_large:
+      mapId: hanoi_my_dinh_me_tri_large
+      label: "My Dinh - Me Tri Large"
+      bounds:
+        south: 21.0037
+        west: 105.7680
+        north: 21.0292
+        east: 105.8015
+      start_latlng: [21.0068, 105.7722]
+      goal_latlng: [21.0266, 105.7972]
+      charging_stations_latlng:
+        - [21.0068, 105.7722]
+        - [21.0147, 105.7819]
+        - [21.0184, 105.7918]
+        - [21.0254, 105.7956]
+      no_fly_zones:
+        - center: [21.0169, 105.7835]
+          radius: 90.0
+        - center: [21.0218, 105.7908]
+          radius: 120.0
+        - center: [21.0092, 105.7775]
+          radius: 85.0
+      safe_order_points:
+        - [21.0058, 105.7708]
+        - [21.0064, 105.7768]
+        - [21.0072, 105.7832]
+        - [21.0069, 105.7901]
+        - [21.0080, 105.7975]
+        - [21.0109, 105.7715]
+        - [21.0118, 105.7792]
+        - [21.0126, 105.7864]
+        - [21.0116, 105.7937]
+        - [21.0125, 105.7992]
+        - [21.0152, 105.7696]
+        - [21.0142, 105.7814]
+        - [21.0148, 105.7854]
+        - [21.0162, 105.7890]
+        - [21.0158, 105.7970]
+        - [21.0187, 105.7724]
+        - [21.0175, 105.7815]
+        - [21.0194, 105.7856]
+        - [21.0187, 105.7894]
+        - [21.0190, 105.7990]
+        - [21.0219, 105.7706]
+        - [21.0228, 105.7778]
+        - [21.0235, 105.7848]
+        - [21.0248, 105.7932]
+        - [21.0242, 105.7994]
+        - [21.0270, 105.7726]
+        - [21.0275, 105.7797]
+        - [21.0268, 105.7867]
+        - [21.0272, 105.7939]
+        - [21.0278, 105.8002]
+      building_geojson_url: "/maps/hanoi_my_dinh_me_tri_large/buildings.geojson"
+      grid_resolution: 15.0
 
 drone:
   max_battery: 100.0
@@ -85,7 +171,7 @@ simulation:
 performance:
   use_map_cache: true
   require_map_cache: true
-  grid_resolution: 10.0
+  grid_resolution: 15.0
   altitude_levels: [20.0, 35.0, 50.0]
   default_demo_drones: 5
   max_demo_drones: 15

@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import type { AsyncRequestStatus, LayerToggles } from '../types/simulation';
 import { ActionStatusMessage } from '../ui/ActionStatus';
@@ -42,7 +42,7 @@ export default function LayerTogglePanel({
                             <span className="block">{label}</span>
                             {key === 'buildingLabels' && (
                                 <span className="mt-0.5 block text-[11px] font-semibold text-slate-500">
-                                    Hiển thị khi zoom &gt;= 17, tối đa 250 nhãn.
+                                    Hiển thị khi zoom &gt;= 16, chỉ show nhãn có độ cao hơn 20m
                                 </span>
                             )}
                         </span>

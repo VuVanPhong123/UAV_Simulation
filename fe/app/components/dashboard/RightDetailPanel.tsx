@@ -79,6 +79,10 @@ type RightDetailPanelProps = {
     draftOrder: DraftOrder;
     draftOrders: DraftOrder[];
     mapConfig: MapConfig | null;
+    selectedMapId: string;
+    selectedMapLabel: string;
+    activeMapId?: string | null;
+    mapChangeDisabled: boolean;
     selectedOrderId: string | null;
     selectedMissionId: string | null;
     eventFilter: EventFilter;
@@ -115,6 +119,7 @@ type RightDetailPanelProps = {
     onSubmitDraftOrders: () => boolean;
     onImportJson: (text: string) => boolean;
     onDispatchOrders: () => void;
+    onOpenMapSelector: () => void;
     onSetMapInteractionMode: (mode: MapInteractionMode) => void;
     collapsed: boolean;
     onToggleCollapsed: () => void;
@@ -135,6 +140,54 @@ function SummaryCard({ label, value }: { label: string; value: string | number }
             <p className="text-[11px] font-bold uppercase text-slate-500">{label}</p>
             <p className="mt-1 font-mono text-lg font-bold text-slate-800">{value}</p>
         </div>
+    );
+}
+
+function MapPresetPanel({
+    selectedMapId,
+    selectedMapLabel,
+    activeMapId,
+    disabled,
+    onOpen
+}: {
+    selectedMapId: string;
+    selectedMapLabel: string;
+    activeMapId?: string | null;
+    disabled: boolean;
+    onOpen: () => void;
+}) {
+    return (
+        <SectionFrame title="Bản đồ mô phỏng">
+            <div className="space-y-3">
+                <div className="rounded border border-slate-200 bg-slate-50 p-3">
+                    <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                            <p className="text-[11px] font-bold uppercase text-slate-500">Đang chọn</p>
+                            <p data-testid="selected-map-label" className="mt-1 truncate text-sm font-bold text-slate-800">{selectedMapLabel}</p>
+                            <p className="mt-1 truncate font-mono text-[11px] font-semibold text-slate-500">{selectedMapId}</p>
+                        </div>
+                        {activeMapId && (
+                            <span className="shrink-0 rounded bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-700">
+                                Đang chạy
+                            </span>
+                        )}
+                    </div>
+                </div>
+                {disabled && (
+                    <p className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700">
+                        Dừng/đặt lại mô phỏng trước khi đổi bản đồ.
+                    </p>
+                )}
+                <button
+                    type="button"
+                    data-testid="open-map-selector"
+                    onClick={onOpen}
+                    className="w-full rounded bg-slate-800 px-3 py-2 text-xs font-bold text-white hover:bg-slate-700"
+                >
+                    Chọn bản đồ
+                </button>
+            </div>
+        </SectionFrame>
     );
 }
 
@@ -428,13 +481,22 @@ export default function RightDetailPanel(props: RightDetailPanelProps) {
                 )}
 
                 {props.activeSection === 'map_tools' && (
-                    <LayerTogglePanel
-                        layers={props.layers}
-                        activeSimId={props.activeSimId}
-                        windShadowStatus={props.windShadowRequestStatus}
-                        buildingLoadStatus={props.buildingLoadStatus}
-                        onToggle={props.onLayerToggle}
-                    />
+                    <>
+                        <MapPresetPanel
+                            selectedMapId={props.selectedMapId}
+                            selectedMapLabel={props.selectedMapLabel}
+                            activeMapId={props.activeMapId}
+                            disabled={props.mapChangeDisabled}
+                            onOpen={props.onOpenMapSelector}
+                        />
+                        <LayerTogglePanel
+                            layers={props.layers}
+                            activeSimId={props.activeSimId}
+                            windShadowStatus={props.windShadowRequestStatus}
+                            buildingLoadStatus={props.buildingLoadStatus}
+                            onToggle={props.onLayerToggle}
+                        />
+                    </>
                 )}
 
                 {props.activeSection === 'events' && (

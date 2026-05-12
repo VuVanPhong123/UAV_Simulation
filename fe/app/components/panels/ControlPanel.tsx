@@ -117,11 +117,6 @@ export default function ControlPanel({
                 <Button disabled={resumeDisabled} onClick={onResume}>Tiếp tục</Button>
                 <Button disabled={commandDisabled} onClick={onReset}>Đặt lại</Button>
             </div>
-            {onStop && (
-                <div className="mt-2">
-                    <Button variant="danger" disabled={commandDisabled} onClick={onStop}>Dừng mô phỏng</Button>
-                </div>
-            )}
             {waitingMessage && (
                 <div className="mt-2">
                     <ActionStatusMessage tone="loading">{waitingMessage}</ActionStatusMessage>

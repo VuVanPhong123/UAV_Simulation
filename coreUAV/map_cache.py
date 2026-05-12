@@ -23,12 +23,12 @@ def default_maps_dir():
     return Path(__file__).resolve().parent / "maps"
 
 
-def find_cache_dir(map_id="hanoi_my_dinh_me_tri", base_dir=None):
+def find_cache_dir(map_id="hanoi_my_dinh_me_tri_large", base_dir=None):
     maps_dir = Path(base_dir) if base_dir is not None else default_maps_dir()
     return maps_dir / map_id
 
 
-def cache_exists(map_id="hanoi_my_dinh_me_tri", base_dir=None):
+def cache_exists(map_id="hanoi_my_dinh_me_tri_large", base_dir=None):
     cache_dir = find_cache_dir(map_id, base_dir)
     return (cache_dir / "metadata.json").exists() and (cache_dir / "grid_cache.npz").exists()
 
@@ -72,7 +72,7 @@ def validate_cache_shapes(metadata, height_grid, static_nfz_mask, valid_masks):
         )
 
 
-def load_map_cache(map_id="hanoi_my_dinh_me_tri", base_dir=None):
+def load_map_cache(map_id="hanoi_my_dinh_me_tri_large", base_dir=None):
     cache_dir = find_cache_dir(map_id, base_dir)
     metadata_path = cache_dir / "metadata.json"
     npz_path = cache_dir / "grid_cache.npz"
