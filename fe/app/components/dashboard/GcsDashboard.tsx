@@ -19,7 +19,9 @@ import {
     PRESET_PREVIEW_MAP_CONFIGS,
     type ActiveDashboardSection,
     type AsyncRequestStatus,
+    type DeliveryOrder,
     type DraftOrder,
+    type DroneTelemetry,
     type DynamicNoFlyZone,
     type DynamicObstacle,
     type EventFilter,
@@ -27,9 +29,12 @@ import {
     type LayerToggles,
     type MapPresetId,
     type MapInteractionMode,
+    type Mission,
+    type MissionsById,
     type ObstacleConfig,
     type ObstacleType,
     type OrderPriority,
+    type OrdersById,
     type WeatherState
 } from '../types/simulation';
 
@@ -37,6 +42,92 @@ type NoFlyZoneConfig = {
     radius: number;
     height: number;
 };
+
+const ACTIVE_ORDER_STATUSES = new Set(['assigned', 'going_to_pickup', 'picked_up', 'delivering']);
+const ACTIVE_MISSION_STATUSES = new Set(['planned', 'to_pickup', 'pickup_arrived', 'to_dropoff']);
+
+function getOrderId(order: DeliveryOrder | null | undefined) {
+    return order?.orderId ?? order?.order_id ?? null;
+}
+
+function getMissionId(mission: Mission | null | undefined) {
+    return mission?.missionId ?? mission?.mission_id ?? null;
+}
+
+function getMissionOrderId(mission: Mission | null | undefined) {
+    return mission?.orderId ?? mission?.order_id ?? null;
+}
+
+function getMissionDroneId(mission: Mission | null | undefined) {
+    return mission?.droneId ?? mission?.drone_id ?? null;
+}
+
+function getOrderAssignedDroneId(order: DeliveryOrder | null | undefined) {
+    return order?.assignedDroneId ?? order?.assigned_drone_id ?? null;
+}
+
+function getOrderMissionId(order: DeliveryOrder | null | undefined) {
+    return order?.missionId ?? order?.mission_id ?? null;
+}
+
+function updatedAtOf(item: { updatedAt?: number; updated_at?: number; createdAt?: number; created_at?: number }) {
+    return Number(item.updatedAt ?? item.updated_at ?? item.createdAt ?? item.created_at ?? 0);
+}
+
+function missionBelongsToDrone(mission: Mission | null | undefined, droneId: string | null) {
+    if (!mission || !droneId) return true;
+    const missionDroneId = getMissionDroneId(mission);
+    return !missionDroneId || missionDroneId === droneId;
+}
+
+function resolveActiveDroneOrderAndMission(
+    drone: DroneTelemetry | null | undefined,
+    orders: OrdersById,
+    missions: MissionsById
+): { orderId: string | null; missionId: string | null } {
+    if (!drone) return { orderId: null, missionId: null };
+
+    const droneId = drone.droneId ?? null;
+    const telemetryOrderId = drone.currentOrderId ?? null;
+    const telemetryMissionId = drone.currentMissionId ?? null;
+
+    if (telemetryOrderId && orders[telemetryOrderId]) {
+        const order = orders[telemetryOrderId];
+        const missionId = getOrderMissionId(order) ?? telemetryMissionId;
+        const mission = missionId ? missions[missionId] ?? null : null;
+
+        return {
+            orderId: telemetryOrderId,
+            missionId: missionBelongsToDrone(mission, droneId) ? missionId : null
+        };
+    }
+
+    if (telemetryMissionId && missions[telemetryMissionId]) {
+        const mission = missions[telemetryMissionId];
+        if (missionBelongsToDrone(mission, droneId)) {
+            const orderId = getMissionOrderId(mission);
+            if (orderId) return { orderId, missionId: telemetryMissionId };
+        }
+    }
+
+    if (!droneId) return { orderId: null, missionId: null };
+
+    const activeMission = Object.values(missions)
+        .filter(mission => getMissionDroneId(mission) === droneId && ACTIVE_MISSION_STATUSES.has(String(mission.status)))
+        .sort((a, b) => updatedAtOf(b) - updatedAtOf(a))[0];
+    if (activeMission) {
+        return { orderId: getMissionOrderId(activeMission), missionId: getMissionId(activeMission) };
+    }
+
+    const activeOrder = Object.values(orders)
+        .filter(order => getOrderAssignedDroneId(order) === droneId && ACTIVE_ORDER_STATUSES.has(String(order.status)))
+        .sort((a, b) => updatedAtOf(b) - updatedAtOf(a))[0];
+    if (activeOrder) {
+        return { orderId: getOrderId(activeOrder), missionId: getOrderMissionId(activeOrder) };
+    }
+
+    return { orderId: null, missionId: null };
+}
 
 type BuildingLoadStatus = 'idle' | 'loading' | 'success' | 'error';
 
@@ -93,7 +184,7 @@ export default function GcsDashboard() {
         if (socket.activeSimId && socket.mapConfig?.mapId === selectedMapId) return socket.mapConfig;
         return previewMapConfig;
     }, [previewMapConfig, selectedMapId, socket.activeSimId, socket.mapConfig]);
-    const mapChangeDisabled = Boolean(socket.activeSimId) || socket.simulationStatus === 'running' || socket.isStartingSimulation || socket.isAwaitingConfig || socket.isAwaitingFirstTelemetry;
+    const mapChangeDisabled = Boolean(socket.activeSimId) || socket.simulationStatus === 'running' || socket.isStartingSimulation || socket.isAwaitingConfig || socket.isAwaitingFirstTelemetry || socket.isAwaitingFirstMovement;
     const activeMapId = socket.activeSimId ? socket.mapConfig?.mapId ?? selectedMapId : null;
     const validDraftOrders = draftOrders.filter(order => (
         order.orderId.trim()
@@ -102,14 +193,30 @@ export default function GcsDashboard() {
         && Number.isFinite(order.payloadKg)
         && order.payloadKg > 0
     ));
-    const simulationLoading = socket.isStartingSimulation || socket.isAwaitingConfig || socket.isAwaitingFirstTelemetry;
+    const simulationLoading = socket.isStartingSimulation || socket.isAwaitingConfig || socket.isAwaitingFirstTelemetry || socket.isAwaitingFirstMovement;
     const simulationLoadingMessage = socket.isStartingSimulation
         ? 'Đang gửi yêu cầu mô phỏng...'
         : socket.isAwaitingConfig
             ? 'Đang nạp bản đồ và cấu hình UAV...'
             : socket.isAwaitingFirstTelemetry
                 ? 'Đang khởi tạo quỹ đạo và telemetry...'
-                : 'Đang chuẩn bị mô phỏng...';
+                : socket.isAwaitingFirstMovement
+                    ? 'Đang phân công đơn hàng và chờ UAV bắt đầu di chuyển...'
+                    : 'Đang chuẩn bị mô phỏng...';
+    const simulationBooting = socket.isStartingSimulation
+        || socket.isAwaitingConfig
+        || socket.isAwaitingFirstTelemetry
+        || socket.isAwaitingFirstMovement;
+    const simulationBootMessage = socket.isAwaitingConfig
+        ? 'Đang nạp bản đồ và cấu hình worker...'
+        : socket.isAwaitingFirstTelemetry
+            ? 'Đang khởi tạo UAV, đơn hàng và tuyến bay...'
+            : socket.isAwaitingFirstMovement
+                ? 'Đang phân công đơn hàng và chờ UAV bắt đầu di chuyển...'
+                : 'Đang gửi yêu cầu bắt đầu mô phỏng...';
+    const shardLoadingLabel = socket.isShardedSimulation && socket.simulationShards.length > 1
+        ? `${socket.simulationShards.length} shard worker`
+        : null;
     const canStartWithOrders = !simulationLoading && droneCount >= 1 && droneCount <= MAX_DEMO_DRONE_COUNT && draftOrders.length > 0 && validDraftOrders.length === draftOrders.length;
     const startHint = 'Cần có ít nhất một đơn hàng hợp lệ trước khi bắt đầu mô phỏng.';
 
@@ -404,17 +511,10 @@ export default function GcsDashboard() {
 
     const handleSelectDrone = useCallback((droneId: string) => {
         socket.setSelectedDroneId(droneId);
-        const drone = socket.drones[droneId];
-        const relatedOrder = drone?.currentOrderId
-            ? socket.orders[drone.currentOrderId] ?? null
-            : Object.values(socket.orders).find(order => (order.assignedDroneId ?? order.assigned_drone_id) === droneId) ?? null;
-        const relatedMission = drone?.currentMissionId
-            ? socket.missions[drone.currentMissionId] ?? null
-            : relatedOrder?.missionId || relatedOrder?.mission_id
-                ? socket.missions[relatedOrder.missionId ?? relatedOrder.mission_id ?? ''] ?? null
-                : Object.values(socket.missions).find(item => (item.droneId ?? item.drone_id) === droneId) ?? null;
-        setSelectedOrderId(relatedOrder ? relatedOrder.orderId ?? relatedOrder.order_id ?? drone?.currentOrderId ?? null : drone?.currentOrderId ?? null);
-        setSelectedMissionId(relatedMission ? relatedMission.missionId ?? relatedMission.mission_id ?? drone?.currentMissionId ?? null : drone?.currentMissionId ?? null);
+        const drone = socket.drones[droneId] ?? null;
+        const resolved = resolveActiveDroneOrderAndMission(drone, socket.orders, socket.missions);
+        setSelectedOrderId(resolved.orderId);
+        setSelectedMissionId(resolved.missionId);
     }, [socket]);
 
     const handleSelectOrder = useCallback((orderId: string) => {
@@ -536,42 +636,58 @@ export default function GcsDashboard() {
             >
                 <LeftNavigation activeSection={activeSection} onChange={setActiveSection} />
                 <div className="flex min-h-0 min-w-0 flex-col">
-                    <main className="relative min-h-0 min-w-0 flex-1">
-                        {simulationLoading && (
-                            <div className="pointer-events-none absolute inset-x-4 top-4 z-[900] rounded border border-blue-200 bg-white/95 p-3 shadow-lg">
-                                <div className="mb-2 flex items-center gap-2 text-xs font-bold text-blue-700">
-                                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-blue-200 border-t-blue-600" />
-                                    <span>{simulationLoadingMessage}</span>
+                    <main className="min-h-0 min-w-0 flex-1">
+                        <div className="relative h-full w-full">
+                            <UavMap
+                                buildings={buildings}
+                                mapConfig={effectiveMapConfig}
+                                drones={socket.drones}
+                                orders={socket.orders}
+                                missions={socket.missions}
+                                selectedOrderId={selectedOrderId}
+                                selectedMissionId={selectedMissionId}
+                                selectedDroneId={socket.selectedDroneId}
+                                plannedPaths={socket.plannedPaths}
+                                pathHistoryByDrone={telemetryHistory.pathHistoryByDrone}
+                                dynamicObstacles={dynamicObstacles}
+                                dynamicNoFlyZones={dynamicNoFlyZones}
+                                windShadowZones={socket.windShadowZones}
+                                layers={layers}
+                                buildingLoadStatus={buildingLoadStatus}
+                                windDir={weather.wind_dir}
+                                windSpeed={weather.wind_speed}
+                                mapInteractionMode={mapInteractionMode}
+                                resizeKey={`${rightPanelCollapsed}-${activeSection}`}
+                                onMapClick={handleMapClick}
+                                onSelectDrone={handleSelectDrone}
+                                onSelectOrder={handleSelectOrder}
+                            />
+
+                            {simulationBooting && (
+                                <div className="absolute inset-0 z-[950] flex items-center justify-center bg-slate-950/35 backdrop-blur-[1px]">
+                                    <div className="w-[380px] max-w-[calc(100%-32px)] rounded-xl border border-blue-200 bg-white/95 p-4 shadow-2xl">
+                                        <div className="flex items-center gap-3">
+                                            <div className="h-6 w-6 shrink-0 animate-spin rounded-full border-4 border-blue-100 border-t-blue-600" />
+                                            <div className="min-w-0">
+                                                <p className="text-sm font-bold text-slate-800">Đang chuẩn bị mô phỏng</p>
+                                                <p className="mt-1 text-xs font-semibold text-slate-500">
+                                                    {simulationBootMessage}
+                                                </p>
+                                                {shardLoadingLabel && (
+                                                    <p className="mt-1 text-[11px] font-bold text-blue-600">
+                                                        Đang phân phối tải qua {shardLoadingLabel}
+                                                    </p>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        <div className="mt-4 h-2 overflow-hidden rounded-full bg-blue-100">
+                                            <div className="h-full w-1/2 animate-pulse rounded-full bg-blue-600" />
+                                        </div>
+                                    </div>
                                 </div>
-                                <div className="h-1.5 overflow-hidden rounded bg-blue-100">
-                                    <div className="h-1.5 w-1/2 animate-pulse rounded bg-blue-600" />
-                                </div>
-                            </div>
-                        )}
-                        <UavMap
-                            buildings={buildings}
-                            mapConfig={effectiveMapConfig}
-                            drones={socket.drones}
-                            orders={socket.orders}
-                            missions={socket.missions}
-                            selectedOrderId={selectedOrderId}
-                            selectedMissionId={selectedMissionId}
-                            selectedDroneId={socket.selectedDroneId}
-                            plannedPaths={socket.plannedPaths}
-                            pathHistoryByDrone={telemetryHistory.pathHistoryByDrone}
-                            dynamicObstacles={dynamicObstacles}
-                            dynamicNoFlyZones={dynamicNoFlyZones}
-                            windShadowZones={socket.windShadowZones}
-                            layers={layers}
-                            buildingLoadStatus={buildingLoadStatus}
-                            windDir={weather.wind_dir}
-                            windSpeed={weather.wind_speed}
-                            mapInteractionMode={mapInteractionMode}
-                            resizeKey={`${rightPanelCollapsed}-${activeSection}`}
-                            onMapClick={handleMapClick}
-                            onSelectDrone={handleSelectDrone}
-                            onSelectOrder={handleSelectOrder}
-                        />
+                            )}
+                        </div>
                     </main>
                     <BottomDroneInfoPanel
                         selectedDrone={socket.selectedDrone}

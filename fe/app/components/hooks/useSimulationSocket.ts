@@ -42,6 +42,7 @@ type StartSimulationInput = number | StartSimulationOptions;
 
 const MAX_EVENT_LOGS = 200;
 const WIND_SHADOW_MAX_POINTS = 400;
+const FIRST_MOVEMENT_DISTANCE_METERS = 3;
 
 function clampDroneCount(value: number) {
     if (!Number.isFinite(value)) return DEFAULT_DEMO_DRONE_COUNT;
@@ -166,28 +167,60 @@ function terminalToStatus(status?: string): SimulationStatus {
     return 'running';
 }
 
-function orderKey(order: DeliveryOrder) {
-    return order.orderId ?? order.order_id ?? '';
+function getOrderId(order: Partial<DeliveryOrder> | null | undefined) {
+    return order?.orderId ?? order?.order_id ?? null;
 }
 
-function missionKey(mission: Mission) {
-    return mission.missionId ?? mission.mission_id ?? '';
+function distanceMeters(a: LatLng, b: LatLng) {
+    const radius = 6371000;
+    const toRad = (value: number) => value * Math.PI / 180;
+    const dLat = toRad(b[0] - a[0]);
+    const dLng = toRad(b[1] - a[1]);
+    const lat1 = toRad(a[0]);
+    const lat2 = toRad(b[0]);
+    const h = Math.sin(dLat / 2) ** 2
+        + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+    return 2 * radius * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
 }
 
-function mapOrders(items?: DeliveryOrder[]) {
-    return (items ?? []).reduce<OrdersById>((acc, order) => {
-        const key = orderKey(order);
-        if (key) acc[key] = order;
-        return acc;
-    }, {});
+function getMissionId(mission: Partial<Mission> | null | undefined) {
+    return mission?.missionId ?? mission?.mission_id ?? null;
 }
 
-function mapMissions(items?: Mission[]) {
-    return (items ?? []).reduce<MissionsById>((acc, mission) => {
-        const key = missionKey(mission);
-        if (key) acc[key] = mission;
-        return acc;
-    }, {});
+function mergeOrdersById(prev: OrdersById, rows: DeliveryOrder[] | undefined | null): OrdersById {
+    if (!Array.isArray(rows) || rows.length === 0) return prev;
+
+    let changed = false;
+    const next = { ...prev };
+    rows.forEach(order => {
+        const orderId = getOrderId(order);
+        if (!orderId) return;
+        next[orderId] = {
+            ...next[orderId],
+            ...order,
+            orderId
+        };
+        changed = true;
+    });
+    return changed ? next : prev;
+}
+
+function mergeMissionsById(prev: MissionsById, rows: Mission[] | undefined | null): MissionsById {
+    if (!Array.isArray(rows) || rows.length === 0) return prev;
+
+    let changed = false;
+    const next = { ...prev };
+    rows.forEach(mission => {
+        const missionId = getMissionId(mission);
+        if (!missionId) return;
+        next[missionId] = {
+            ...next[missionId],
+            ...mission,
+            missionId
+        };
+        changed = true;
+    });
+    return changed ? next : prev;
 }
 
 function mapWorkers(items?: WorkerInfo[]) {
@@ -202,6 +235,8 @@ export function useSimulationSocket() {
     const activeSimIdRef = useRef<string | null>(null);
     const locallyStoppedSimIdsRef = useRef<Set<string>>(new Set());
     const plannedPathSignaturesRef = useRef<Record<string, string>>({});
+    const isAwaitingFirstMovementRef = useRef(false);
+    const initialDronePositionsRef = useRef<Record<string, LatLng>>({});
     const [serverStatus, setServerStatus] = useState<ServerStatus>('connecting');
     const [workerStatus, setWorkerStatus] = useState<WorkerStatus>('unknown');
     const [workers, setWorkers] = useState<WorkersById>({});
@@ -224,6 +259,7 @@ export function useSimulationSocket() {
     const [isStartingSimulation, setIsStartingSimulation] = useState(false);
     const [isAwaitingConfig, setIsAwaitingConfig] = useState(false);
     const [isAwaitingFirstTelemetry, setIsAwaitingFirstTelemetry] = useState(false);
+    const [isAwaitingFirstMovement, setIsAwaitingFirstMovement] = useState(false);
     const [windShadowRequestStatus, setWindShadowRequestStatus] = useState<AsyncRequestStatus>('idle');
 
     useEffect(() => {
@@ -233,6 +269,10 @@ export function useSimulationSocket() {
     useEffect(() => {
         selectedDroneIdRef.current = selectedDroneId;
     }, [selectedDroneId]);
+
+    useEffect(() => {
+        isAwaitingFirstMovementRef.current = isAwaitingFirstMovement;
+    }, [isAwaitingFirstMovement]);
 
     const addLocalEvent = useCallback((level: string, code: string, message: string, timestamp?: number) => {
         setEventLogs(prev => [
@@ -274,6 +314,9 @@ export function useSimulationSocket() {
         setIsStartingSimulation(false);
         setIsAwaitingConfig(false);
         setIsAwaitingFirstTelemetry(false);
+        setIsAwaitingFirstMovement(false);
+        isAwaitingFirstMovementRef.current = false;
+        initialDronePositionsRef.current = {};
     }, []);
 
     const updateSelectedDroneId = useCallback((droneId: string | null) => {
@@ -300,6 +343,9 @@ export function useSimulationSocket() {
         if (action === 'reset') {
             clearSessionVisuals();
             setIsAwaitingFirstTelemetry(true);
+            setIsAwaitingFirstMovement(true);
+            isAwaitingFirstMovementRef.current = true;
+            initialDronePositionsRef.current = {};
         }
         return true;
     }, [activeSimId, addLocalEvent, clearPendingStart, clearSessionVisuals, sendJson]);
@@ -340,9 +386,12 @@ export function useSimulationSocket() {
             }
         });
         if (sent) {
+            initialDronePositionsRef.current = {};
             setIsStartingSimulation(true);
             setIsAwaitingConfig(true);
             setIsAwaitingFirstTelemetry(true);
+            setIsAwaitingFirstMovement(true);
+            isAwaitingFirstMovementRef.current = true;
         }
         return sent;
     }, [sendJson]);
@@ -491,6 +540,9 @@ export function useSimulationSocket() {
                 setIsStartingSimulation(false);
                 setIsAwaitingConfig(true);
                 setIsAwaitingFirstTelemetry(true);
+                setIsAwaitingFirstMovement(true);
+                isAwaitingFirstMovementRef.current = true;
+                initialDronePositionsRef.current = {};
                 setDrones({});
                 setPlannedPaths({});
                 setPlannedPaths3d({});
@@ -531,6 +583,16 @@ export function useSimulationSocket() {
                 setIsAwaitingFirstTelemetry(false);
                 const nextTelemetry = normalizeTelemetry(data);
                 const droneId = nextTelemetry.droneId ?? 'drone_1';
+                if (isAwaitingFirstMovementRef.current && nextTelemetry.droneId && nextTelemetry.pos) {
+                    const pos = nextTelemetry.pos;
+                    const initialPos = initialDronePositionsRef.current[droneId];
+                    if (!initialPos) {
+                        initialDronePositionsRef.current[droneId] = pos;
+                    } else if (distanceMeters(initialPos, pos) >= FIRST_MOVEMENT_DISTANCE_METERS) {
+                        setIsAwaitingFirstMovement(false);
+                        isAwaitingFirstMovementRef.current = false;
+                    }
+                }
                 setDrones(prev => ({ ...prev, [droneId]: nextTelemetry }));
                 if (!selectedDroneIdRef.current) {
                     updateSelectedDroneId(droneId);
@@ -553,21 +615,36 @@ export function useSimulationSocket() {
                 setPlannedPaths3d(prev => ({ ...prev, [droneId]: path3d }));
             } else if (data.type === 'order_state') {
                 if (!isCurrentSimulationMessage(data.simId)) return;
-                setOrders(mapOrders(data.payload?.orders as DeliveryOrder[] | undefined));
-                setMissions(mapMissions(data.payload?.missions as Mission[] | undefined));
+                const payload = data.payload ?? {};
+                setOrders(prev => mergeOrdersById(prev, payload.orders as DeliveryOrder[] | undefined));
+                setMissions(prev => mergeMissionsById(prev, payload.missions as Mission[] | undefined));
             } else if (data.type === 'order_update') {
                 if (!isCurrentSimulationMessage(data.simId)) return;
                 const order = data.payload as DeliveryOrder | undefined;
-                const key = order ? orderKey(order) : '';
+                const key = getOrderId(order);
                 if (order && key) {
-                    setOrders(prev => ({ ...prev, [key]: order }));
+                    setOrders(prev => ({
+                        ...prev,
+                        [key]: {
+                            ...prev[key],
+                            ...order,
+                            orderId: key
+                        }
+                    }));
                 }
             } else if (data.type === 'mission_update') {
                 if (!isCurrentSimulationMessage(data.simId)) return;
                 const mission = data.payload as Mission | undefined;
-                const key = mission ? missionKey(mission) : '';
+                const key = getMissionId(mission);
                 if (mission && key) {
-                    setMissions(prev => ({ ...prev, [key]: mission }));
+                    setMissions(prev => ({
+                        ...prev,
+                        [key]: {
+                            ...prev[key],
+                            ...mission,
+                            missionId: key
+                        }
+                    }));
                 }
             } else if (data.type === 'event') {
                 if (!isCurrentSimulationMessage(data.simId)) return;
@@ -643,6 +720,7 @@ export function useSimulationSocket() {
         isStartingSimulation,
         isAwaitingConfig,
         isAwaitingFirstTelemetry,
+        isAwaitingFirstMovement,
         windShadowRequestStatus,
         addLocalEvent,
         startSimulation,

@@ -384,7 +384,7 @@ export type IncomingMessage = {
 
 export const DEFAULT_LAYER_TOGGLES: LayerToggles = {
     buildings: true,
-    buildingLabels: false,
+    buildingLabels: true,
     noFlyZones: true,
     chargingStations: true,
     plannedPath: true,

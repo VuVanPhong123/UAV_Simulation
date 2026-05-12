@@ -147,6 +147,10 @@ function activeOrderCount() {
   )).length;
 }
 
+function observedShardedOrderCount() {
+  return Array.from(observedOrders.keys()).filter((key) => key.startsWith('order_sharded_')).length;
+}
+
 async function waitForIdleWorkers() {
   await waitFor((message) => {
     if (message.type === 'worker_list') {
@@ -205,6 +209,19 @@ async function runScenario() {
     await waitFor((message) => message.simId === simId && message.type === 'planned_path', 180000, 'planned paths received');
   }
   pass('planned paths received');
+
+  if (observedShardedOrderCount() < 6) {
+    await waitFor((message) => {
+      remember(message);
+      return message.simId === simId
+        && ['order_update', 'order_state'].includes(message.type)
+        && observedShardedOrderCount() >= 6;
+    }, 120000, 'merged orders from all shards');
+  }
+  if (observedShardedOrderCount() < 6) {
+    fail('expected merged orders from all shards', `got ${observedShardedOrderCount()} unique orders`);
+  }
+  pass('merged orders from all shards');
 
   if (activeOrderCount() < 4) {
     await waitFor((message) => {

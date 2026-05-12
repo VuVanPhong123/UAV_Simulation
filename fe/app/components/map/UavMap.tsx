@@ -14,6 +14,7 @@ import WindOverlay from './WindOverlay';
 import type {
     DroneTelemetry,
     DronesById,
+    DeliveryOrder,
     DynamicNoFlyZone,
     DynamicObstacle,
     LatLng,
@@ -21,6 +22,7 @@ import type {
     MapInteractionMode,
     MapConfig,
     MapBounds,
+    Mission,
     MissionsById,
     OrdersById,
     PathHistoryByDrone,
@@ -44,6 +46,8 @@ const BUILDING_RENDER_ZOOM_THRESHOLD = 16.4;
 const BUILDING_LABEL_ZOOM_THRESHOLD = 16.4;
 const MAX_BUILDING_LABELS = 250;
 const MIN_BUILDING_LABEL_HEIGHT = 20;
+const ACTIVE_ORDER_STATUSES = new Set(['assigned', 'going_to_pickup', 'picked_up', 'delivering']);
+const ACTIVE_MISSION_STATUSES = new Set(['planned', 'to_pickup', 'pickup_arrived', 'to_dropoff']);
 
 type UavMapProps = {
     buildings: GeoJsonObject | null;
@@ -71,6 +75,89 @@ type UavMapProps = {
 };
 
 const HIDDEN_ORDER_MARKER_STATUSES = new Set(['completed', 'failed', 'canceled']);
+
+function getOrderId(order: DeliveryOrder | null | undefined) {
+    return order?.orderId ?? order?.order_id ?? null;
+}
+
+function getMissionId(mission: Mission | null | undefined) {
+    return mission?.missionId ?? mission?.mission_id ?? null;
+}
+
+function getMissionOrderId(mission: Mission | null | undefined) {
+    return mission?.orderId ?? mission?.order_id ?? null;
+}
+
+function getMissionDroneId(mission: Mission | null | undefined) {
+    return mission?.droneId ?? mission?.drone_id ?? null;
+}
+
+function getOrderAssignedDroneId(order: DeliveryOrder | null | undefined) {
+    return order?.assignedDroneId ?? order?.assigned_drone_id ?? null;
+}
+
+function getOrderMissionId(order: DeliveryOrder | null | undefined) {
+    return order?.missionId ?? order?.mission_id ?? null;
+}
+
+function updatedAtOf(item: { updatedAt?: number; updated_at?: number; createdAt?: number; created_at?: number }) {
+    return Number(item.updatedAt ?? item.updated_at ?? item.createdAt ?? item.created_at ?? 0);
+}
+
+function missionBelongsToDrone(mission: Mission | null | undefined, droneId: string | null) {
+    if (!mission || !droneId) return true;
+    const missionDroneId = getMissionDroneId(mission);
+    return !missionDroneId || missionDroneId === droneId;
+}
+
+function resolveActiveDroneOrderAndMission(
+    drone: DroneTelemetry | null | undefined,
+    orders: OrdersById,
+    missions: MissionsById
+): { orderId: string | null; missionId: string | null } {
+    if (!drone) return { orderId: null, missionId: null };
+
+    const droneId = drone.droneId ?? null;
+    const telemetryOrderId = drone.currentOrderId ?? null;
+    const telemetryMissionId = drone.currentMissionId ?? null;
+
+    if (telemetryOrderId && orders[telemetryOrderId]) {
+        const order = orders[telemetryOrderId];
+        const missionId = getOrderMissionId(order) ?? telemetryMissionId;
+        const mission = missionId ? missions[missionId] ?? null : null;
+
+        return {
+            orderId: telemetryOrderId,
+            missionId: missionBelongsToDrone(mission, droneId) ? missionId : null
+        };
+    }
+
+    if (telemetryMissionId && missions[telemetryMissionId]) {
+        const mission = missions[telemetryMissionId];
+        if (missionBelongsToDrone(mission, droneId)) {
+            const orderId = getMissionOrderId(mission);
+            if (orderId) return { orderId, missionId: telemetryMissionId };
+        }
+    }
+
+    if (!droneId) return { orderId: null, missionId: null };
+
+    const activeMission = Object.values(missions)
+        .filter(mission => getMissionDroneId(mission) === droneId && ACTIVE_MISSION_STATUSES.has(String(mission.status)))
+        .sort((a, b) => updatedAtOf(b) - updatedAtOf(a))[0];
+    if (activeMission) {
+        return { orderId: getMissionOrderId(activeMission), missionId: getMissionId(activeMission) };
+    }
+
+    const activeOrder = Object.values(orders)
+        .filter(order => getOrderAssignedDroneId(order) === droneId && ACTIVE_ORDER_STATUSES.has(String(order.status)))
+        .sort((a, b) => updatedAtOf(b) - updatedAtOf(a))[0];
+    if (activeOrder) {
+        return { orderId: getOrderId(activeOrder), missionId: getOrderMissionId(activeOrder) };
+    }
+
+    return { orderId: null, missionId: null };
+}
 
 function MapZoomObserver({ onZoomChange }: { onZoomChange: (zoom: number) => void }) {
     const map = useMapEvents({
@@ -197,7 +284,10 @@ export default function UavMap({
         const path = pathHistoryByDrone[selectedDroneId] ?? [];
         return path.length >= 2 ? samplePolylinePositions(path, MAX_RENDERED_HISTORY_POINTS) : [];
     }, [pathHistoryByDrone, selectedDroneId]);
-    const selectedMission = selectedMissionId ? missions[selectedMissionId] ?? null : null;
+    const rawSelectedMission = selectedMissionId ? missions[selectedMissionId] ?? null : null;
+    const selectedMission = rawSelectedMission && selectedDroneId && !missionBelongsToDrone(rawSelectedMission, selectedDroneId)
+        ? null
+        : rawSelectedMission;
     const buildingData = useMemo(() => {
         if (!buildings || buildings.type !== 'FeatureCollection') return buildings;
         const featureCollection = buildings as FeatureCollection<Geometry, GeoJsonProperties>;
@@ -223,28 +313,17 @@ export default function UavMap({
         } satisfies FeatureCollection<Geometry, GeoJsonProperties>;
     }, [buildings, showBuildingLabels]);
     const selectedMissionOrderId = selectedMission?.orderId ?? selectedMission?.order_id ?? null;
+    const selectedDroneActiveOrder = useMemo(
+        () => resolveActiveDroneOrderAndMission(selectedDrone, orders, missions),
+        [selectedDrone, orders, missions]
+    );
+    const effectiveSelectedOrderId = selectedDroneActiveOrder.orderId ?? selectedOrderId ?? selectedMissionOrderId;
+
     const visibleOrderIds = useMemo(() => {
         const ids = new Set<string>();
-        if (selectedOrderId) ids.add(selectedOrderId);
-        if (selectedMissionOrderId) ids.add(selectedMissionOrderId);
-        if (selectedDroneId) {
-            if (selectedDrone?.currentOrderId) ids.add(selectedDrone.currentOrderId);
-            Object.values(orders).forEach(order => {
-                const assignedDroneId = order.assignedDroneId ?? order.assigned_drone_id;
-                if (assignedDroneId === selectedDroneId) {
-                    ids.add(orderIdOf(order));
-                }
-            });
-            Object.values(missions).forEach(mission => {
-                const missionDroneId = mission.droneId ?? mission.drone_id;
-                const missionOrderId = mission.orderId ?? mission.order_id;
-                if (missionDroneId === selectedDroneId && missionOrderId) {
-                    ids.add(missionOrderId);
-                }
-            });
-        }
+        if (effectiveSelectedOrderId) ids.add(effectiveSelectedOrderId);
         return ids;
-    }, [missions, orders, selectedDrone, selectedDroneId, selectedMissionOrderId, selectedOrderId]);
+    }, [effectiveSelectedOrderId]);
     const interactionText = mapInteractionMode === 'select_pickup'
         ? 'Đang chọn điểm lấy hàng trên bản đồ'
         : mapInteractionMode === 'select_dropoff'
@@ -443,14 +522,14 @@ export default function UavMap({
 
                 {Object.values(orders).filter(order => {
                     const orderId = orderIdOf(order);
-                    const forceVisible = selectedOrderId === orderId || selectedMissionOrderId === orderId;
+                    const forceVisible = effectiveSelectedOrderId === orderId;
                     if (HIDDEN_ORDER_MARKER_STATUSES.has(order.status) && !forceVisible) return false;
                     return forceVisible || (layers.orders && visibleOrderIds.has(orderId));
                 }).map(order => {
                     const orderId = orderIdOf(order);
                     const pickup = order.pickup;
                     const dropoff = order.dropoff;
-                    const selected = selectedOrderId === orderId || selectedMissionOrderId === orderId;
+                    const selected = effectiveSelectedOrderId === orderId;
                     const completed = ['completed', 'failed', 'canceled'].includes(order.status);
                     const pickupColor = completed ? '#64748b' : '#0ea5e9';
                     const dropoffColor = completed ? '#64748b' : '#f97316';

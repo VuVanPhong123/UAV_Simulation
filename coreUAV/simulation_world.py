@@ -160,9 +160,15 @@ class SimulationWorld:
     def _now_ms(self):
         return int(time.time() * 1000)
 
+    def _scoped_id_prefix(self, base):
+        if self.drone_id_offset <= 0:
+            return base
+        return f"{base}_g{self.drone_id_offset + 1}"
+
     def _next_order_id(self):
+        prefix = self._scoped_id_prefix("order")
         while True:
-            order_id = f"order_{self.order_seq}"
+            order_id = f"{prefix}_{self.order_seq}"
             self.order_seq += 1
             if order_id not in self.orders:
                 return order_id
@@ -248,8 +254,9 @@ class SimulationWorld:
         return path, cost
 
     def _next_mission_id(self):
+        prefix = self._scoped_id_prefix("mission")
         while True:
-            mission_id = f"mission_{self.mission_seq}"
+            mission_id = f"{prefix}_{self.mission_seq}"
             self.mission_seq += 1
             if mission_id not in self.missions:
                 return mission_id
