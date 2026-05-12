@@ -190,6 +190,7 @@ function mapMissions(items?: Mission[]) {
 export function useSimulationSocket() {
     const wsRef = useRef<WebSocket | null>(null);
     const activeSimIdRef = useRef<string | null>(null);
+    const locallyStoppedSimIdsRef = useRef<Set<string>>(new Set());
     const plannedPathSignaturesRef = useRef<Record<string, string>>({});
     const [serverStatus, setServerStatus] = useState<ServerStatus>('connecting');
     const [workerStatus, setWorkerStatus] = useState<WorkerStatus>('unknown');
@@ -199,6 +200,7 @@ export function useSimulationSocket() {
     const [latencyMs, setLatencyMs] = useState<number | null>(null);
     const [drones, setDrones] = useState<DronesById>({});
     const [selectedDroneId, setSelectedDroneId] = useState<string | null>(null);
+    const selectedDroneIdRef = useRef<string | null>(null);
     const [mapConfig, setMapConfig] = useState<MapConfig | null>(null);
     const [plannedPaths, setPlannedPaths] = useState<PlannedPathsByDrone>({});
     const [plannedPaths3d, setPlannedPaths3d] = useState<PlannedPath3dByDrone>({});
@@ -214,6 +216,10 @@ export function useSimulationSocket() {
     useEffect(() => {
         activeSimIdRef.current = activeSimId;
     }, [activeSimId]);
+
+    useEffect(() => {
+        selectedDroneIdRef.current = selectedDroneId;
+    }, [selectedDroneId]);
 
     const addLocalEvent = useCallback((level: string, code: string, message: string, timestamp?: number) => {
         setEventLogs(prev => [
@@ -257,6 +263,11 @@ export function useSimulationSocket() {
         setIsAwaitingFirstTelemetry(false);
     }, []);
 
+    const updateSelectedDroneId = useCallback((droneId: string | null) => {
+        selectedDroneIdRef.current = droneId;
+        setSelectedDroneId(droneId);
+    }, []);
+
     const sendCommand = useCallback((action: 'pause' | 'resume' | 'stop' | 'reset') => {
         if (!activeSimId) {
             addLocalEvent('warning', 'NO_ACTIVE_SIMULATION', `No active simulation to ${action}.`);
@@ -277,6 +288,25 @@ export function useSimulationSocket() {
         }
         return true;
     }, [activeSimId, addLocalEvent, clearPendingStart, clearSessionVisuals, sendJson]);
+
+    const resetToSetup = useCallback(() => {
+        const simId = activeSimIdRef.current;
+        const sentStop = simId
+            ? sendJson({ type: 'command', simId, action: 'stop' })
+            : true;
+        if (!sentStop) return false;
+
+        if (simId) locallyStoppedSimIdsRef.current.add(simId);
+        activeSimIdRef.current = null;
+        setActiveSimId(null);
+        setSimulationStatus('stopped');
+        clearPendingStart();
+        clearSessionVisuals();
+        updateSelectedDroneId(null);
+        setDrones({});
+        setMapConfig(null);
+        return true;
+    }, [clearPendingStart, clearSessionVisuals, sendJson, updateSelectedDroneId]);
 
     const startSimulation = useCallback((input: StartSimulationInput = 1) => {
         const droneCount = clampDroneCount(typeof input === 'number' ? input : input.droneCount);
@@ -395,14 +425,25 @@ export function useSimulationSocket() {
             } else if (data.type === 'connection_state') {
                 setServerStatus(data.server === 'connected' ? 'connected' : 'disconnected');
                 setWorkerStatus(data.workerStatus ?? 'unknown');
+                if (data.activeSimId && locallyStoppedSimIdsRef.current.has(data.activeSimId)) {
+                    activeSimIdRef.current = null;
+                    setActiveSimId(null);
+                    setSimulationStatus('stopped');
+                    clearPendingStart();
+                    return;
+                }
                 activeSimIdRef.current = data.activeSimId ?? null;
                 setActiveSimId(data.activeSimId ?? null);
                 setSimulationStatus(data.activeSimId ? 'running' : 'idle');
-                if (!data.activeSimId) clearPendingStart();
+                if (!data.activeSimId) {
+                    locallyStoppedSimIdsRef.current.clear();
+                    clearPendingStart();
+                }
             } else if (data.type === 'worker_status') {
                 const status = (data.status ?? data.payload?.status ?? 'unknown') as WorkerStatus;
                 setWorkerStatus(status);
             } else if (data.type === 'simulation_assigned') {
+                if (data.simId) locallyStoppedSimIdsRef.current.delete(data.simId);
                 activeSimIdRef.current = data.simId ?? null;
                 setActiveSimId(data.simId ?? null);
                 setSimulationStatus('running');
@@ -415,7 +456,7 @@ export function useSimulationSocket() {
                 plannedPathSignaturesRef.current = {};
                 setOrders({});
                 setMissions({});
-                setSelectedDroneId(null);
+                updateSelectedDroneId(null);
                 addLocalEvent('info', 'SIMULATION_ASSIGNED', `Simulation assigned to worker ${data.workerId ?? '-'}.`, data.timestamp);
             } else if (data.type === 'worker_busy') {
                 setSimulationStatus('idle');
@@ -445,6 +486,9 @@ export function useSimulationSocket() {
                 const nextTelemetry = normalizeTelemetry(data);
                 const droneId = nextTelemetry.droneId ?? 'drone_1';
                 setDrones(prev => ({ ...prev, [droneId]: nextTelemetry }));
+                if (!selectedDroneIdRef.current) {
+                    updateSelectedDroneId(droneId);
+                }
                 if (nextTelemetry.status === 'paused') setSimulationStatus('paused');
                 else if (nextTelemetry.status && !['success', 'failed', 'emergency_landing'].includes(nextTelemetry.status) && activeSimIdRef.current) {
                     setSimulationStatus('running');
@@ -521,7 +565,7 @@ export function useSimulationSocket() {
         };
 
         return () => ws.close();
-    }, [addLocalEvent, clearPendingStart, clearSessionVisuals, isCurrentSimulationMessage]);
+    }, [addLocalEvent, clearPendingStart, clearSessionVisuals, isCurrentSimulationMessage, updateSelectedDroneId]);
 
     return {
         serverStatus,
@@ -533,7 +577,7 @@ export function useSimulationSocket() {
         drones,
         selectedDroneId,
         selectedDrone,
-        setSelectedDroneId,
+        setSelectedDroneId: updateSelectedDroneId,
         mapConfig,
         plannedPaths,
         plannedPaths3d,
@@ -553,6 +597,7 @@ export function useSimulationSocket() {
         resumeSimulation: () => sendCommand('resume'),
         stopSimulation: () => sendCommand('stop'),
         resetSimulation: () => sendCommand('reset'),
+        resetToSetup,
         applyWeather,
         addObstacle,
         addNoFlyZone,

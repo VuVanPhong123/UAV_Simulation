@@ -128,6 +128,8 @@ obstacle_avoidance:
   sensor_range: 30.0
   avoidance_duration: 2.0
   altitude_boost: 10.0
+  detected_obstacle_buffer: 10.0
+  sensor_lookahead_factor: 1.0
   turn_angle: 30.0
   safety_margin: 5.0
 

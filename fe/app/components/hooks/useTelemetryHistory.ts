@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { DroneTelemetry, DronesById, LatLng, PathHistoryByDrone } from '../types/simulation';
 
 const MAX_HISTORY_POINTS_PER_DRONE = 160;
@@ -34,24 +34,38 @@ type TelemetryHistories = {
     temperatureHistoryByDrone: NumberHistoryByDrone;
     altitudeHistoryByDrone: NumberHistoryByDrone;
     pathHistoryByDrone: PathHistoryByDrone;
+    lastTelemetryKeyByDrone: Record<string, string>;
+    sampleCounterByDrone: Record<string, number>;
 };
 
-const EMPTY_HISTORIES: TelemetryHistories = {
-    batteryHistoryByDrone: {},
-    temperatureHistoryByDrone: {},
-    altitudeHistoryByDrone: {},
-    pathHistoryByDrone: {}
-};
+function createEmptyHistories(): TelemetryHistories {
+    return {
+        batteryHistoryByDrone: {},
+        temperatureHistoryByDrone: {},
+        altitudeHistoryByDrone: {},
+        pathHistoryByDrone: {},
+        lastTelemetryKeyByDrone: {},
+        sampleCounterByDrone: {}
+    };
+}
+
+function telemetryKeyOf(droneState: DroneTelemetry) {
+    if (typeof droneState.step === 'number') {
+        return `step:${droneState.step}`;
+    }
+
+    if (Array.isArray(droneState.pos)) {
+        return `pos:${droneState.pos[0].toFixed(7)},${droneState.pos[1].toFixed(7)}:${droneState.status ?? ''}`;
+    }
+
+    return `state:${droneState.status ?? ''}:${droneState.batteryPercent ?? droneState.battery ?? ''}:${droneState.altitude ?? ''}`;
+}
 
 export function useTelemetryHistory(drones: DronesById, selectedDroneId: string | null) {
-    const [histories, setHistories] = useState<TelemetryHistories>(EMPTY_HISTORIES);
-    const lastStepByDroneRef = useRef<Record<string, number>>({});
-    const sampleCounterByDroneRef = useRef<Record<string, number>>({});
+    const [histories, setHistories] = useState<TelemetryHistories>(createEmptyHistories);
 
     const resetHistory = useCallback(() => {
-        lastStepByDroneRef.current = {};
-        sampleCounterByDroneRef.current = {};
-        setHistories(EMPTY_HISTORIES);
+        setHistories(createEmptyHistories());
     }, []);
 
     useEffect(() => {
@@ -64,23 +78,25 @@ export function useTelemetryHistory(drones: DronesById, selectedDroneId: string 
                 batteryHistoryByDrone: { ...prev.batteryHistoryByDrone },
                 temperatureHistoryByDrone: { ...prev.temperatureHistoryByDrone },
                 altitudeHistoryByDrone: { ...prev.altitudeHistoryByDrone },
-                pathHistoryByDrone: { ...prev.pathHistoryByDrone }
+                pathHistoryByDrone: { ...prev.pathHistoryByDrone },
+                lastTelemetryKeyByDrone: { ...prev.lastTelemetryKeyByDrone },
+                sampleCounterByDrone: { ...prev.sampleCounterByDrone }
             };
 
             droneStates.forEach((droneState: DroneTelemetry) => {
                 const droneId = droneState.droneId ?? 'drone_1';
-                if (
-                    typeof droneState.step === 'number'
-                    && lastStepByDroneRef.current[droneId] === droneState.step
-                ) {
+                const telemetryKey = telemetryKeyOf(droneState);
+
+                if (prev.lastTelemetryKeyByDrone[droneId] === telemetryKey) {
                     return;
                 }
-                if (typeof droneState.step === 'number') {
-                    lastStepByDroneRef.current[droneId] = droneState.step;
-                }
 
-                const sampleCounter = (sampleCounterByDroneRef.current[droneId] ?? 0) + 1;
-                sampleCounterByDroneRef.current[droneId] = sampleCounter;
+                next.lastTelemetryKeyByDrone[droneId] = telemetryKey;
+
+                const sampleCounter = (prev.sampleCounterByDrone[droneId] ?? 0) + 1;
+                next.sampleCounterByDrone[droneId] = sampleCounter;
+                changed = true;
+
                 const shouldSampleSparkline = sampleCounter === 1 || sampleCounter % TELEMETRY_HISTORY_SAMPLE_EVERY === 0;
 
                 const battery = droneState.batteryPercent ?? droneState.battery;
@@ -96,7 +112,7 @@ export function useTelemetryHistory(drones: DronesById, selectedDroneId: string 
                     next.altitudeHistoryByDrone[droneId] = pushLimited(next.altitudeHistoryByDrone[droneId] ?? [], droneState.altitude, MAX_SPARKLINE_POINTS);
                     changed = true;
                 }
-                if (droneState.pos) {
+                if (Array.isArray(droneState.pos)) {
                     const pos = droneState.pos as LatLng;
                     const previousPath = next.pathHistoryByDrone[droneId] ?? [];
                     const lastPos = previousPath[previousPath.length - 1];

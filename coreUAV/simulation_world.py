@@ -72,6 +72,8 @@ class SimulationWorld:
         self.sensor_range = config["obstacle_avoidance"]["sensor_range"]
         self.avoid_duration = config["obstacle_avoidance"]["avoidance_duration"]
         self.altitude_boost = config["obstacle_avoidance"]["altitude_boost"]
+        self.detected_obstacle_buffer = float(config["obstacle_avoidance"].get("detected_obstacle_buffer", 10.0))
+        self.sensor_lookahead_factor = float(config["obstacle_avoidance"].get("sensor_lookahead_factor", 1.0))
         self.vertical_speed = config.get("drone", {}).get("vertical_speed", 3.0)
         simulation_config = config.get("simulation", {})
         self.safety_distance = float(simulation_config.get("drone_safety_distance", 15.0))
@@ -582,6 +584,28 @@ class SimulationWorld:
             return self._path_altitude(agent.path[-1], agent.drone.altitude)
         return agent.drone.altitude
 
+    def _next_path_pos(self, agent):
+        if agent.path and agent.path_index < len(agent.path) - 1:
+            next_point = agent.path[agent.path_index + 1]
+            next_node = self._path_node(next_point)
+            return self.graph.nodes.get(next_node)
+        return None
+
+    def _distance_point_to_segment(self, point, a, b):
+        px, py = point
+        ax, ay = a
+        bx, by = b
+        abx = bx - ax
+        aby = by - ay
+        denom = abx * abx + aby * aby
+        if denom <= 1e-9:
+            return float(np.hypot(px - ax, py - ay)), 0.0
+        t = ((px - ax) * abx + (py - ay) * aby) / denom
+        t = max(0.0, min(1.0, t))
+        cx = ax + t * abx
+        cy = ay + t * aby
+        return float(np.hypot(px - cx, py - cy)), t
+
     def _current_grid_node(self, agent):
         cx = int(round((agent.drone.pos[0] - self.graph.min_x) / self.graph.resolution))
         cy = int(round((agent.drone.pos[1] - self.graph.min_y) / self.graph.resolution))
@@ -838,21 +862,39 @@ class SimulationWorld:
             if agent.drone_id in obs["detected_by"]:
                 continue
 
-            dx = agent.drone.pos[0] - obs["pos"][0]
-            dy = agent.drone.pos[1] - obs["pos"][1]
             effective_sensor_range = self.sensor_range * rain_factor(self.is_raining)["sensor_factor"]
-            if np.hypot(dx, dy) > effective_sensor_range + obs["radius"]:
+            current_pos = agent.drone.pos
+            obs_pos = obs["pos"]
+            current_distance = float(np.hypot(current_pos[0] - obs_pos[0], current_pos[1] - obs_pos[1]))
+            detected = current_distance <= effective_sensor_range + obs["radius"]
+
+            next_pos = self._next_path_pos(agent)
+            if not detected and next_pos is not None:
+                segment_distance, segment_t = self._distance_point_to_segment(obs_pos, current_pos, next_pos)
+                corridor_radius = obs["radius"] + self.graph.safety_margin
+                if 0.0 <= segment_t <= 1.0 and segment_distance <= corridor_radius:
+                    segment_length = float(np.hypot(next_pos[0] - current_pos[0], next_pos[1] - current_pos[1]))
+                    projected_distance = segment_length * segment_t
+                    lookahead_range = effective_sensor_range * self.sensor_lookahead_factor
+                    if (
+                        segment_length <= lookahead_range + corridor_radius
+                        or projected_distance <= lookahead_range + corridor_radius
+                    ):
+                        detected = True
+
+            if not detected:
                 continue
 
             obs["detected_by"].add(agent.drone_id)
             if not obs["graph_added"]:
-                self.graph.add_dynamic_obstacle(obs["pos"], obs["radius"], obs["height"])
+                effective_radius = obs["radius"] + self.detected_obstacle_buffer
+                self.graph.add_dynamic_obstacle(obs["pos"], effective_radius, obs["height"])
                 obs["graph_added"] = True
             self.queue_event(
                 agent.drone_id,
                 EventLevel.WARNING.value,
                 EventCode.OBSTACLE_DETECTED.value,
-                f"Obstacle detected: {obs['type']} r={obs['radius']:.1f}m h={obs['height']:.1f}m.",
+                f"Obstacle detected: {obs['type']} r={obs['radius']:.1f}m buffer={self.detected_obstacle_buffer:.1f}m h={obs['height']:.1f}m.",
             )
             if agent.drone.altitude <= obs["height"] + self.graph.safety_margin:
                 blocking_detected = True
@@ -861,17 +903,17 @@ class SimulationWorld:
 
     def _handle_avoidance(self, agent, dt):
         if agent.drone.status in TERMINAL_STATUSES or agent.drone.status == DroneStatus.CHARGING.value:
-            return
+            return False
 
         if not agent.avoiding:
             if not self._detect_obstacles(agent):
-                return
+                return False
             agent.avoiding = True
             agent.avoid_timer = self.avoid_duration
             agent.drone.status = DroneStatus.REROUTING.value
             agent.drone.node = self._current_grid_node(agent)
             if self._replan_agent(agent, EventCode.PATH_REPLANNED.value, "Path replanned around obstacle."):
-                return
+                return True
 
             boosted_altitude = min(agent.drone.max_altitude, agent.drone.altitude + self.altitude_boost)
             raw_path = self._plan_path(agent.drone.node, agent.current_target_node, boosted_altitude)
@@ -887,10 +929,12 @@ class SimulationWorld:
                 if agent.current_mission_id:
                     self._fail_current_mission(agent, "No safe path after obstacle detection.")
                 self.queue_event(agent.drone_id, EventLevel.ERROR.value, EventCode.EMERGENCY_LANDING.value, "No safe path after obstacle detection.")
+            return True
         else:
             agent.avoid_timer -= dt
             if agent.avoid_timer <= 0:
                 agent.avoiding = False
+        return False
 
     def _find_best_charging_station(self, agent):
         best_station = None
@@ -1415,7 +1459,8 @@ class SimulationWorld:
             if agent.drone.status == DroneStatus.CHARGING.value:
                 self._handle_charging(agent, dt)
                 continue
-            self._handle_avoidance(agent, dt)
+            if self._handle_avoidance(agent, dt):
+                continue
             if agent.drone.status in TERMINAL_STATUSES:
                 continue
             self._maybe_reroute_to_charging(agent)

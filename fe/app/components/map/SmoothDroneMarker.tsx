@@ -85,7 +85,7 @@ function collisionLabel(action?: string | null) {
     if (!action) return null;
     if (action.includes('yield')) return 'Nhường đường';
     if (action.includes('altitude')) return 'Tách độ cao';
-    return 'Né va chạm';
+    return '';
 }
 
 function shouldSnap(from: LatLng | null, to: LatLng, drone: DroneTelemetry) {

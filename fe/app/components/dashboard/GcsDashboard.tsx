@@ -93,7 +93,7 @@ export default function GcsDashboard() {
         if (socket.activeSimId && socket.mapConfig?.mapId === selectedMapId) return socket.mapConfig;
         return previewMapConfig;
     }, [previewMapConfig, selectedMapId, socket.activeSimId, socket.mapConfig]);
-    const mapChangeDisabled = Boolean(socket.activeSimId) || socket.simulationStatus === 'running' || socket.isStartingSimulation;
+    const mapChangeDisabled = Boolean(socket.activeSimId) || socket.simulationStatus === 'running' || socket.isStartingSimulation || socket.isAwaitingConfig || socket.isAwaitingFirstTelemetry;
     const activeMapId = socket.activeSimId ? socket.mapConfig?.mapId ?? selectedMapId : null;
     const validDraftOrders = draftOrders.filter(order => (
         order.orderId.trim()
@@ -102,13 +102,23 @@ export default function GcsDashboard() {
         && Number.isFinite(order.payloadKg)
         && order.payloadKg > 0
     ));
-    const canStartWithOrders = droneCount >= 1 && droneCount <= MAX_DEMO_DRONE_COUNT && draftOrders.length > 0 && validDraftOrders.length === draftOrders.length;
+    const simulationLoading = socket.isStartingSimulation || socket.isAwaitingConfig || socket.isAwaitingFirstTelemetry;
+    const simulationLoadingMessage = socket.isStartingSimulation
+        ? 'Đang gửi yêu cầu mô phỏng...'
+        : socket.isAwaitingConfig
+            ? 'Đang nạp bản đồ và cấu hình UAV...'
+            : socket.isAwaitingFirstTelemetry
+                ? 'Đang khởi tạo quỹ đạo và telemetry...'
+                : 'Đang chuẩn bị mô phỏng...';
+    const canStartWithOrders = !simulationLoading && droneCount >= 1 && droneCount <= MAX_DEMO_DRONE_COUNT && draftOrders.length > 0 && validDraftOrders.length === draftOrders.length;
     const startHint = 'Cần có ít nhất một đơn hàng hợp lệ trước khi bắt đầu mô phỏng.';
 
     const orderStartHint = startHint;
     const effectiveStartHint = socket.serverStatus !== 'connected'
         ? 'Chưa kết nối máy chủ.'
-        : socket.workerStatus === 'disconnected' || socket.workerStatus === 'unknown'
+        : simulationLoading
+            ? simulationLoadingMessage
+            : socket.workerStatus === 'disconnected' || socket.workerStatus === 'unknown'
             ? 'Chưa có worker kết nối.'
             : socket.workerStatus === 'busy'
                 ? 'Worker đang bận, vui lòng dừng mô phỏng khác hoặc chờ worker rảnh.'
@@ -427,7 +437,7 @@ export default function GcsDashboard() {
     }, [socket]);
 
     const handleReset = useCallback(() => {
-        if (socket.resetSimulation()) {
+        if (socket.resetToSetup()) {
             telemetryHistory.resetHistory();
             setDynamicObstacles([]);
             setDynamicNoFlyZones([]);
@@ -435,7 +445,10 @@ export default function GcsDashboard() {
             setSelectedMissionId(null);
             setEventFilter('all');
             setMapInteractionMode('none');
-            setTemporaryFeedback('success', 'Đã gửi lệnh đặt lại mô phỏng.');
+            setDraftOrders([]);
+            setDraftOrder(createDraftOrder());
+            setImportError(null);
+            setTemporaryFeedback('success', 'Đã đặt lại về màn hình thiết lập mô phỏng.');
             return;
         }
         setTemporaryFeedback('warning', 'Không có mô phỏng đang chạy để đặt lại.');
@@ -520,7 +533,18 @@ export default function GcsDashboard() {
             >
                 <LeftNavigation activeSection={activeSection} onChange={setActiveSection} />
                 <div className="flex min-h-0 min-w-0 flex-col">
-                    <main className="min-h-0 min-w-0 flex-1">
+                    <main className="relative min-h-0 min-w-0 flex-1">
+                        {simulationLoading && (
+                            <div className="pointer-events-none absolute inset-x-4 top-4 z-[900] rounded border border-blue-200 bg-white/95 p-3 shadow-lg">
+                                <div className="mb-2 flex items-center gap-2 text-xs font-bold text-blue-700">
+                                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-blue-200 border-t-blue-600" />
+                                    <span>{simulationLoadingMessage}</span>
+                                </div>
+                                <div className="h-1.5 overflow-hidden rounded bg-blue-100">
+                                    <div className="h-1.5 w-1/2 animate-pulse rounded bg-blue-600" />
+                                </div>
+                            </div>
+                        )}
                         <UavMap
                             buildings={buildings}
                             mapConfig={effectiveMapConfig}
