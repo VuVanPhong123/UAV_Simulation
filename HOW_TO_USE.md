@@ -18,7 +18,7 @@ Màn hình gồm 4 khu vực chính:
 3. **Bản đồ trung tâm**: hiển thị UAV, tuyến bay, đơn hàng, vùng cấm bay, vật cản, tòa nhà.
 4. **Panel bên phải và panel dưới**: hiển thị điều khiển, thông tin UAV, đơn hàng, môi trường và sự kiện.
 
-![alt text](doc/doc/image.png)
+![alt text](doc/image.png)
 
 ---
 
