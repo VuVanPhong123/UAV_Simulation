@@ -18,7 +18,7 @@ Màn hình gồm 4 khu vực chính:
 3. **Bản đồ trung tâm**: hiển thị UAV, tuyến bay, đơn hàng, vùng cấm bay, vật cản, tòa nhà.
 4. **Panel bên phải và panel dưới**: hiển thị điều khiển, thông tin UAV, đơn hàng, môi trường và sự kiện.
 
-![alt text](doc\doc\image.png)
+![alt text](doc/doc/image.png)
 
 ---
 
@@ -46,7 +46,7 @@ Nếu worker đang `busy`, cần dừng mô phỏng hiện tại hoặc chờ wo
 ## 3. Chọn số drone, tạo đơn hàng
 Đầu tiên chọn số drone muốn mô phỏng(hiện tại đang max 30, có thể fix lại trong fe):
 
-![alt text](doc\image-2.png)
+![alt text](doc/image-2.png)
 
 Vào mục:
 
@@ -57,7 +57,7 @@ Vào mục:
 Bấm mở phần quản lý đơn hàng.
 
 Hệ thống hỗ trợ 3 cách tạo đơn(chọn 100 đơn rồi tạo ngẫu nhiên cho nó nhanh):
-![alt text](doc\image-1.png)
+![alt text](doc/image-1.png)
 1. Tạo đơn thủ công.
 2. Tạo đơn ngẫu nhiên.
 3. Import danh sách đơn bằng JSON.
@@ -167,8 +167,8 @@ Nếu dùng nhiều worker, broker có thể chia mô phỏng thành nhiều sha
 
 
 
-![alt text](doc\image-3.png)
-![alt text](doc\image-4.png)
+![alt text](doc/image-3.png)
+![alt text](doc/image-4.png)
 ---
 
 ## 5. Điều khiển mô phỏng
@@ -208,7 +208,7 @@ Có thể click vào UAV để xem:
 
 Thông tin này hiển thị ở panel dưới bản đồ.
 
-![alt text](doc\image-5.png)
+![alt text](doc/image-5.png)
 ---
 
 ## 8. Theo dõi tiến trình giao hàng
@@ -235,7 +235,7 @@ Trạng thái đơn hàng có thể gồm:
 
 Trong panel chi tiết, có thể xem đơn liên kết, nhiệm vụ liên kết và UAV phụ trách.
 
-![alt text](doc\image-6.png)
+![alt text](doc/image-6.png)
 
 ---
 
@@ -255,7 +255,7 @@ Khi chọn một UAV trong danh sách:
 * Panel chi tiết sẽ hiển thị thông tin UAV.
 * Tuyến bay và lịch sử bay của UAV được hiển thị nếu layer tương ứng đang bật.
 
-![alt text](doc\image-7.png)
+![alt text](doc/image-7.png)
 
 ---
 
@@ -286,7 +286,7 @@ Khi áp dụng môi trường:
 
 
 
-![alt text](doc\image-8.png)
+![alt text](doc/image-8.png)
 
 ---
 
@@ -316,8 +316,8 @@ Sau khi thêm vật cản:
 
 
 
-![alt text](doc\image-9.png)
-![alt text](doc\image-10.png)
+![alt text](doc/image-9.png)
+![alt text](doc/image-10.png)
 
 
 
@@ -371,7 +371,7 @@ Lưu ý:
 * Layer tòa nhà và vùng cản gió có thể bật khi muốn giải thích yếu tố 2.5D và môi trường.
 
 
-![alt text](doc\image-11.png)
+![alt text](doc/image-11.png)
 
 ---
 
@@ -412,7 +412,7 @@ Có thể lọc sự kiện theo:
 
 
 
-![alt text](doc\image-12.png)
+![alt text](doc/image-12.png)
 
 ---
 
