@@ -18,7 +18,7 @@ Màn hình gồm 4 khu vực chính:
 3. **Bản đồ trung tâm**: hiển thị UAV, tuyến bay, đơn hàng, vùng cấm bay, vật cản, tòa nhà.
 4. **Panel bên phải và panel dưới**: hiển thị điều khiển, thông tin UAV, đơn hàng, môi trường và sự kiện.
 
-![alt text](image.png)
+![alt text](doc\doc\image.png)
 
 ---
 
@@ -46,7 +46,7 @@ Nếu worker đang `busy`, cần dừng mô phỏng hiện tại hoặc chờ wo
 ## 3. Chọn số drone, tạo đơn hàng
 Đầu tiên chọn số drone muốn mô phỏng(hiện tại đang max 30, có thể fix lại trong fe):
 
-![alt text](image-2.png)
+![alt text](doc\image-2.png)
 
 Vào mục:
 
@@ -57,7 +57,7 @@ Vào mục:
 Bấm mở phần quản lý đơn hàng.
 
 Hệ thống hỗ trợ 3 cách tạo đơn(chọn 100 đơn rồi tạo ngẫu nhiên cho nó nhanh):
-![alt text](image-1.png)
+![alt text](doc\image-1.png)
 1. Tạo đơn thủ công.
 2. Tạo đơn ngẫu nhiên.
 3. Import danh sách đơn bằng JSON.
@@ -165,10 +165,10 @@ Khi bắt đầu, hệ thống sẽ:
 
 Nếu dùng nhiều worker, broker có thể chia mô phỏng thành nhiều shard để chạy nhiều UAV hơn.
 
-Chèn ảnh demo:
 
-![alt text](image-3.png)
-![alt text](image-4.png)
+
+![alt text](doc\image-3.png)
+![alt text](doc\image-4.png)
 ---
 
 ## 5. Điều khiển mô phỏng
@@ -208,7 +208,7 @@ Có thể click vào UAV để xem:
 
 Thông tin này hiển thị ở panel dưới bản đồ.
 
-![alt text](image-5.png)
+![alt text](doc\image-5.png)
 ---
 
 ## 8. Theo dõi tiến trình giao hàng
@@ -235,7 +235,7 @@ Trạng thái đơn hàng có thể gồm:
 
 Trong panel chi tiết, có thể xem đơn liên kết, nhiệm vụ liên kết và UAV phụ trách.
 
-![alt text](image-6.png)
+![alt text](doc\image-6.png)
 
 ---
 
@@ -255,7 +255,7 @@ Khi chọn một UAV trong danh sách:
 * Panel chi tiết sẽ hiển thị thông tin UAV.
 * Tuyến bay và lịch sử bay của UAV được hiển thị nếu layer tương ứng đang bật.
 
-![alt text](image-7.png)
+![alt text](doc\image-7.png)
 
 ---
 
@@ -284,9 +284,9 @@ Khi áp dụng môi trường:
 * UAV có thể được tính lại đường bay.
 * Pin, tốc độ, nhiệt độ và thời gian dự kiến có thể thay đổi.
 
-Chèn ảnh demo:
 
-![alt text](image-8.png)
+
+![alt text](doc\image-8.png)
 
 ---
 
@@ -314,10 +314,10 @@ Sau khi thêm vật cản:
 * Khi UAV phát hiện vật cản, hệ thống có thể tính lại đường bay.
 * Sự kiện phát hiện vật cản và tính lại đường bay sẽ xuất hiện trong nhật ký.
 
-Chèn ảnh demo:
 
-![alt text](image-9.png)
-![alt text](image-10.png)
+
+![alt text](doc\image-9.png)
+![alt text](doc\image-10.png)
 
 
 
@@ -342,7 +342,7 @@ Sau khi thêm vùng cấm bay:
 * Các UAV đang hoạt động sẽ được tính lại đường bay nếu tuyến hiện tại bị ảnh hưởng.
 * Nếu không tìm được đường bay an toàn, UAV hoặc nhiệm vụ có thể bị báo lỗi.
 
-Chèn ảnh demo:
+
 
 ---
 
@@ -370,8 +370,8 @@ Lưu ý:
 * Khi demo, nên bật UAV, đơn hàng, tuyến bay, lịch sử bay, vùng cấm bay và vật cản.
 * Layer tòa nhà và vùng cản gió có thể bật khi muốn giải thích yếu tố 2.5D và môi trường.
 
-Chèn ảnh demo:
-![alt text](image-11.png)
+
+![alt text](doc\image-11.png)
 
 ---
 
@@ -410,9 +410,9 @@ Có thể lọc sự kiện theo:
 | Đơn đang chọn      | Chỉ hiển thị sự kiện của đơn hàng đang chọn |
 | Nhiệm vụ đang chọn | Chỉ hiển thị sự kiện của nhiệm vụ đang chọn |
 
-Chèn ảnh demo:
 
-![alt text](image-12.png)
+
+![alt text](doc\image-12.png)
 
 ---
 
