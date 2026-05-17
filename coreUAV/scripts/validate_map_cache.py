@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from map_cache import cache_exists, find_cache_dir, load_map_cache
+from maps.cache import cache_exists, find_cache_dir, load_map_cache
 
 
 def _node_in_bounds(node, rows, cols):

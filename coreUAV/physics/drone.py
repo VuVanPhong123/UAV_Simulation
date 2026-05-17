@@ -1,5 +1,5 @@
-from statuses import DroneStatus
-from energy_model import battery_drain_rate
+from models.statuses import DroneStatus
+from physics.energy import battery_drain_rate
 
 class Drone:
     def __init__(self, config):

@@ -1,9 +1,42 @@
 import gymnasium as gym
 import numpy as np
-from graph_map import WaypointGraph, path_point_altitude, path_point_node
-from drone import Drone
-from statuses import DroneStatus, EventCode, EventLevel
-from energy_model import rain_factor
+from pathfinding.graph import WaypointGraph
+from pathfinding.utils import path_point_altitude, path_point_node
+from physics.drone import Drone
+from models.statuses import DroneStatus, EventCode, EventLevel
+from physics.energy import rain_factor
+from simulation.obstacles import add_obstacle as _add_obstacle, detect_obstacles as _detect_obstacles
+
+
+class _EnvObstacleCtx:
+    """Minimal adapter so DeliveryEnv can call shared detect_obstacles()."""
+
+    sensor_lookahead_factor = 1.0
+    detected_obstacle_buffer = 0.0
+
+    def __init__(self, env):
+        self.obstacles = env.obstacles
+        self.sensor_range = env.sensor_range
+        self.is_raining = env.is_raining
+        self.graph = env.graph
+        self._env = env
+
+    def _next_path_pos(self, agent):
+        return None  # single-drone env skips segment lookahead
+
+    def queue_event(self, drone_id, level, code, message):
+        self._env.queue_event(level, code, message)
+
+
+class _EnvDroneAgent:
+    """Minimal agent facade for DeliveryEnv obstacle detection."""
+
+    drone_id = "env"
+
+    def __init__(self, drone, path, path_index):
+        self.drone = drone
+        self.path = path
+        self.path_index = path_index
 
 
 class DeliveryEnv(gym.Env):
@@ -39,11 +72,7 @@ class DeliveryEnv(gym.Env):
         self.last_climbing = False
 
     def queue_event(self, level, code, message):
-        self.pending_events.append({
-            "level": level,
-            "code": code,
-            "message": message
-        })
+        self.pending_events.append({"level": level, "code": code, "message": message})
 
     def drain_events(self):
         events = self.pending_events
@@ -104,14 +133,7 @@ class DeliveryEnv(gym.Env):
         return self._get_obs(), {}
 
     def add_obstacle(self, latlng, radius=8.0, height=25.0, obstacle_type="unknown"):
-        x, y = self.graph.transformer.transform(latlng[1], latlng[0])
-        self.obstacles.append({
-            'pos': (x, y),
-            'radius': float(radius),
-            'height': float(height),
-            'type': obstacle_type,
-            'detected': False
-        })
+        _add_obstacle(self, latlng, radius, height, obstacle_type)
         print(f"Ve tinh bao cao vat can {obstacle_type} tai GPS {latlng}, r={radius}m, h={height}m")
 
     def _path_node(self, point):
@@ -133,13 +155,10 @@ class DeliveryEnv(gym.Env):
         if current_altitude is None:
             current_altitude = self.drone.altitude
         return self.graph.a_star_2_5d(
-            start,
-            goal,
+            start, goal,
             current_altitude=current_altitude,
-            wind_dir=self.wind_dir,
-            wind_speed=self.wind_speed,
-            ambient_temp=self.ambient_temp,
-            is_raining=self.is_raining
+            wind_dir=self.wind_dir, wind_speed=self.wind_speed,
+            ambient_temp=self.ambient_temp, is_raining=self.is_raining,
         )
 
     def _get_obs(self):
@@ -164,7 +183,7 @@ class DeliveryEnv(gym.Env):
             "altitudeChangeRate": self.altitude_change_rate,
             "verticalSpeed": self.vertical_speed,
             "currentPathIndex": self.path_index,
-            "pathLength": len(self.path)
+            "pathLength": len(self.path),
         }
 
     def _current_grid_node(self):
@@ -178,58 +197,24 @@ class DeliveryEnv(gym.Env):
         best_station = None
         best_path = None
         best_cost = float("inf")
-
         for station_node in self.graph.charging_stations:
             path = self._plan_path(self.drone.node, station_node)
             if not path:
                 continue
-
             cost = self.graph.estimate_path_cost(
-                path,
-                self.drone.altitude,
-                self.wind_dir,
-                self.wind_speed,
-                self.ambient_temp,
-                self.is_raining
+                path, self.drone.altitude,
+                self.wind_dir, self.wind_speed, self.ambient_temp, self.is_raining,
             )
             if cost < best_cost:
                 best_cost = cost
                 best_station = station_node
                 best_path = path
-
         return best_station, best_path, best_cost
 
     def _detect_obstacle(self):
-        blocking_detected = False
-        for obs in self.obstacles:
-            if obs['detected']:
-                continue
-
-            dx = self.drone.pos[0] - obs['pos'][0]
-            dy = self.drone.pos[1] - obs['pos'][1]
-            effective_sensor_range = self.sensor_range * rain_factor(self.is_raining)["sensor_factor"]
-            if np.hypot(dx, dy) > effective_sensor_range + obs['radius']:
-                continue
-
-            obs['detected'] = True
-            self.graph.add_dynamic_obstacle(obs['pos'], obs['radius'], obs['height'])
-            self.queue_event(
-                EventLevel.WARNING.value,
-                EventCode.OBSTACLE_DETECTED.value,
-                f"Obstacle detected: {obs['type']} r={obs['radius']:.1f}m h={obs['height']:.1f}m."
-            )
-
-            if self.drone.altitude > obs['height'] + self.graph.safety_margin:
-                self.queue_event(
-                    EventLevel.INFO.value,
-                    EventCode.OBSTACLE_DETECTED.value,
-                    "Obstacle is below current safe altitude; continuing over it."
-                )
-                continue
-
-            blocking_detected = True
-
-        return blocking_detected
+        ctx = _EnvObstacleCtx(self)
+        agent = _EnvDroneAgent(self.drone, self.path, self.path_index)
+        return _detect_obstacles(ctx, agent)
 
     def _handle_avoidance(self, dt):
         if self.drone.status in (DroneStatus.CHARGING.value, DroneStatus.SUCCESS.value, DroneStatus.FAILED.value, DroneStatus.EMERGENCY_LANDING.value):
@@ -365,7 +350,7 @@ class DeliveryEnv(gym.Env):
                 ratio = move / dist
                 self.drone.pos = (
                     self.drone.pos[0] + dx * ratio,
-                    self.drone.pos[1] + dy * ratio
+                    self.drone.pos[1] + dy * ratio,
                 )
                 horizontal_reached = dist <= effective_speed * dt + 1e-4
                 if horizontal_reached:
@@ -403,17 +388,11 @@ class DeliveryEnv(gym.Env):
             terminated = True
 
         if self.drone.status == DroneStatus.FLYING.value:
-            is_shielded = self.graph.check_wind_shadow(
-                self.drone.node, self.wind_dir, self.drone.altitude
-            )
+            is_shielded = self.graph.check_wind_shadow(self.drone.node, self.wind_dir, self.drone.altitude)
             self.drone.consume_battery(
-                dt,
-                self.last_climbing,
-                wind_speed=self.wind_speed,
-                wind_dir=self.wind_dir,
-                heading=self.drone.heading,
-                is_shielded=is_shielded,
-                is_raining=self.is_raining
+                dt, self.last_climbing,
+                wind_speed=self.wind_speed, wind_dir=self.wind_dir,
+                heading=self.drone.heading, is_shielded=is_shielded, is_raining=self.is_raining,
             )
 
         if self.drone.battery <= 0:

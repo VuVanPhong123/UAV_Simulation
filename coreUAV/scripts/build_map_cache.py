@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from map_cache import save_map_cache
+from maps.cache import save_map_cache
 
 
 DEFAULT_ALTITUDE_LEVELS = [20.0, 35.0, 50.0]
