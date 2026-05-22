@@ -2,20 +2,22 @@ from models.statuses import DroneStatus
 from physics.energy import battery_drain_rate
 
 class Drone:
-    def __init__(self, config):
-        self.max_battery = config['drone']['max_battery']
-        self.battery = self.max_battery
-        self.discharge_base = config['drone']['discharge_rate_base']
-        self.discharge_climb = config['drone']['discharge_rate_climb']
-        self.speed = config['drone']['speed']
-        self.low_threshold = config['drone']['battery_low_threshold']
-        self.safe_target = config['drone']['battery_safe_target']
-        self.recharge_rate = config['drone']['recharge_rate']
-        self.max_altitude = config['drone']['max_altitude']
-        self.min_altitude = config['drone']['min_altitude']
-        self.normal_altitude = config['drone']['normal_altitude']
-        self.payload_weight = config['drone'].get('payload_weight', 0.0)
-        self.payload_penalty = config['drone'].get('payload_penalty', 0.0)
+    def __init__(self, config, overrides=None):
+        base = config['drone']
+        merged = {**base, **(overrides or {})}
+        self.max_battery     = merged['max_battery']
+        self.battery         = self.max_battery
+        self.discharge_base  = merged['discharge_rate_base']
+        self.discharge_climb = merged['discharge_rate_climb']
+        self.speed           = merged['speed']
+        self.low_threshold   = merged['battery_low_threshold']
+        self.safe_target     = merged['battery_safe_target']
+        self.recharge_rate   = merged['recharge_rate']
+        self.max_altitude    = merged['max_altitude']
+        self.min_altitude    = merged['min_altitude']
+        self.normal_altitude = merged['normal_altitude']
+        self.payload_weight  = merged.get('payload_weight', 0.0)
+        self.payload_penalty = merged.get('payload_penalty', 0.0)
         self.pos = None
         self.node = None
         self.altitude = self.normal_altitude

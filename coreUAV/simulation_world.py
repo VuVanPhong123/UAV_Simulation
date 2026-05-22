@@ -31,10 +31,11 @@ def clamp_drone_count(value, config):
 
 
 class SimulationWorld:
-    def __init__(self, config, drone_count=1, idle_on_start=True, drone_id_offset=0):
+    def __init__(self, config, drone_count=1, idle_on_start=True, drone_id_offset=0, drone_configs=None):
         self.config = config
         self.idle_on_start = bool(idle_on_start)
         self.drone_id_offset = max(0, int(drone_id_offset or 0))
+        self.drone_configs = drone_configs or {}
         self.graph = WaypointGraph(config)
         self.time_step = config["simulation"]["time_step"]
         self.max_steps = config["simulation"]["max_steps"]
@@ -84,7 +85,8 @@ class SimulationWorld:
         for idx in range(self.drone_count):
             global_idx = self.drone_id_offset + idx + 1
             drone_id = f"drone_{global_idx}"
-            drone = Drone(self.config)
+            overrides = self.drone_configs.get(drone_id) or {}
+            drone = Drone(self.config, overrides=overrides)
             start_node = self._find_nearby_clear_node(self.graph.start, idx, drone.normal_altitude)
             goal_node = self._find_nearby_clear_node(self.graph.goal, idx, drone.normal_altitude)
             drone.pos = self.graph.nodes[start_node]
@@ -113,6 +115,27 @@ class SimulationWorld:
                 self._replan_agent(agent, EventCode.PATH_PLANNED.value, "Initial path planned.")
 
     # ── event / update queues ─────────────────────────────────────────────────
+
+    def setup_drone(self, drone_id, **overrides):
+        self.drone_configs[drone_id] = overrides
+        agent = self.agents.get(drone_id)
+        if agent is None:
+            return
+        base = self.config['drone']
+        merged = {**base, **overrides}
+        d = agent.drone
+        d.max_battery     = merged['max_battery']
+        d.discharge_base  = merged['discharge_rate_base']
+        d.discharge_climb = merged['discharge_rate_climb']
+        d.speed           = merged['speed']
+        d.low_threshold   = merged['battery_low_threshold']
+        d.safe_target     = merged['battery_safe_target']
+        d.recharge_rate   = merged['recharge_rate']
+        d.max_altitude    = merged['max_altitude']
+        d.min_altitude    = merged['min_altitude']
+        d.normal_altitude = merged['normal_altitude']
+        d.payload_weight  = merged.get('payload_weight', 0.0)
+        d.payload_penalty = merged.get('payload_penalty', 0.0)
 
     def queue_event(self, drone_id, level, code, message):
         self.pending_events.append({"droneId": drone_id, "level": level, "code": code, "message": message})

@@ -174,11 +174,14 @@ def handle_start_simulation(state, data):
         state.frontend_id = None
         return
 
+    raw_drone_configs = payload.get("droneConfigs", payload.get("drone_configs")) or {}
+    drone_configs = {str(k): v for k, v in raw_drone_configs.items() if isinstance(v, dict)}
     state.world = SimulationWorld(
         state.config,
         state.drone_count,
         idle_on_start=True,
         drone_id_offset=state.drone_id_offset,
+        drone_configs=drone_configs,
     )
     state.transformer = Transformer.from_crs(state.world.graph.crs_utm, "epsg:4326", always_xy=True)
     state.last_path_ids = mark_current_paths(state)
@@ -208,6 +211,17 @@ def handle_start_simulation(state, data):
     drain_world_events(state)
     state.is_running = True
     print(f"Bat dau simulation {state.sim_id} cho {state.frontend_id} voi {state.drone_count} drone, shard={state.shard_id or 'none'}")
+
+
+def handle_configure_drone(state, data):
+    if not state.is_assigned or reject_wrong_sim(state, data):
+        return
+    payload = data.get("payload") or {}
+    drone_id = payload.get("droneId") or payload.get("drone_id")
+    overrides = payload.get("config") or {}
+    if not drone_id or not isinstance(overrides, dict):
+        return
+    state.world.setup_drone(drone_id, **overrides)
 
 
 def handle_add_obstacle(state, data):

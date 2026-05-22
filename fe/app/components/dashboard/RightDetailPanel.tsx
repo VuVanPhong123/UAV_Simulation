@@ -25,12 +25,15 @@ import {
     translateOrderStatus
 } from '../utils/labels';
 import { ActionStatusMessage } from '../ui/ActionStatus';
+import DroneConfigPanel from '../panels/DroneConfigPanel';
 import { MAP_PRESET_OPTIONS } from '../types/simulation';
 import type {
     ActiveDashboardSection,
     AsyncRequestStatus,
     DeliveryOrder,
     DraftOrder,
+    DroneConfigOverride,
+    DroneConfigsById,
     DroneTelemetry,
     DronesById,
     DynamicNoFlyZone,
@@ -122,6 +125,11 @@ type RightDetailPanelProps = {
     onDispatchOrders: () => void;
     onOpenMapSelector: () => void;
     onSetMapInteractionMode: (mode: MapInteractionMode) => void;
+    droneConfigs: DroneConfigsById;
+    droneConfigApplyStatus: 'idle' | 'loading' | 'success' | 'error';
+    droneConfigApplyMessage: string | null;
+    onApplyDroneConfig: (droneId: string, config: DroneConfigOverride) => void;
+    onClearDroneConfig: (droneId: string) => void;
     collapsed: boolean;
     onToggleCollapsed: () => void;
 };
@@ -251,6 +259,43 @@ function OrdersSummaryPanel({ orders, missions }: { orders: OrdersById; missions
                 </div>
             </SectionFrame>
         </div>
+    );
+}
+
+function StagedDroneConfigSummary({
+    droneConfigs,
+    onClear
+}: {
+    droneConfigs: DroneConfigsById;
+    onClear: (droneId: string) => void;
+}) {
+    const entries = Object.entries(droneConfigs).filter(([, cfg]) => cfg && Object.keys(cfg).length > 0);
+    if (entries.length === 0) return null;
+    return (
+        <SectionFrame title="Cấu hình UAV đã staged">
+            <div className="space-y-2">
+                {entries.map(([droneId, cfg]) => {
+                    const fieldCount = Object.keys(cfg).length;
+                    return (
+                        <div key={droneId} className="flex items-center justify-between gap-2 rounded border border-slate-200 bg-slate-50 px-3 py-2">
+                            <div className="min-w-0">
+                                <p className="font-mono text-xs font-bold text-slate-800">{droneId}</p>
+                                <p className="mt-0.5 text-[11px] font-semibold text-slate-500">
+                                    {fieldCount} trường đã đặt
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => onClear(droneId)}
+                                className="shrink-0 cursor-pointer rounded border border-slate-300 bg-white px-2 py-1 text-[11px] font-bold text-slate-600 hover:bg-red-50 hover:border-red-300 hover:text-red-700"
+                            >
+                                Xóa
+                            </button>
+                        </div>
+                    );
+                })}
+            </div>
+        </SectionFrame>
     );
 }
 
@@ -388,6 +433,23 @@ export default function RightDetailPanel(props: RightDetailPanelProps) {
                                 <SummaryCard label="Đơn thất bại" value={failedOrders} />
                             </div>
                         </SectionFrame>
+                        {!props.activeSimId && (
+                            <>
+                                <DroneConfigPanel
+                                    selectedDroneId={props.selectedDroneId}
+                                    activeSimId={props.activeSimId}
+                                    droneIds={Array.from({ length: props.droneCount }, (_, i) => `drone_${i + 1}`)}
+                                    droneConfigs={props.droneConfigs}
+                                    applyStatus={props.droneConfigApplyStatus}
+                                    onApply={props.onApplyDroneConfig}
+                                    onClearConfig={props.onClearDroneConfig}
+                                />
+                                <StagedDroneConfigSummary
+                                    droneConfigs={props.droneConfigs}
+                                    onClear={props.onClearDroneConfig}
+                                />
+                            </>
+                        )}
                     </>
                 )}
 
@@ -452,6 +514,18 @@ export default function RightDetailPanel(props: RightDetailPanelProps) {
                             droneState={props.droneState}
                             plannedPath3d={props.plannedPath3d}
                             altitudeHistory={props.altitudeHistory}
+                        />
+                        <DroneConfigPanel
+                            selectedDroneId={props.selectedDroneId}
+                            activeSimId={props.activeSimId}
+                            droneIds={props.activeSimId
+                                ? Object.keys(props.drones)
+                                : Array.from({ length: props.droneCount }, (_, i) => `drone_${i + 1}`)
+                            }
+                            droneConfigs={props.droneConfigs}
+                            applyStatus={props.droneConfigApplyStatus}
+                            onApply={props.onApplyDroneConfig}
+                            onClearConfig={props.onClearDroneConfig}
                         />
                     </>
                 )}
