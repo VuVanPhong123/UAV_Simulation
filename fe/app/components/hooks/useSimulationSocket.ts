@@ -8,6 +8,8 @@ import {
 } from '../types/simulation';
 import type {
     DroneTelemetry,
+    DroneConfigOverride,
+    DroneConfigsById,
     DynamicNoFlyZone,
     DynamicObstacle,
     DronesById,
@@ -36,6 +38,7 @@ type StartSimulationOptions = {
     droneCount: number;
     orderBatch?: unknown[];
     mapId?: string;
+    droneConfigs?: DroneConfigsById;
 };
 
 type StartSimulationInput = number | StartSimulationOptions;
@@ -375,12 +378,14 @@ export function useSimulationSocket() {
         const droneCount = clampDroneCount(typeof input === 'number' ? input : input.droneCount);
         const orderBatch = typeof input === 'number' ? undefined : input.orderBatch;
         const mapId = typeof input === 'number' ? DEFAULT_MAP_PRESET_ID : input.mapId ?? DEFAULT_MAP_PRESET_ID;
+        const droneConfigs = typeof input === 'number' ? undefined : input.droneConfigs;
         const sent = sendJson({
             type: 'request_start_simulation',
             payload: {
                 mapId,
                 droneCount,
                 orderBatch,
+                droneConfigs,
                 autoDispatch: true,
                 simulationMode: 'order_dispatch'
             }
@@ -472,6 +477,18 @@ export function useSimulationSocket() {
         });
         setWindShadowRequestStatus(sent ? 'loading' : 'error');
         return sent;
+    }, [activeSimId, addLocalEvent, sendJson]);
+
+    const configureDrone = useCallback((droneId: string, config: DroneConfigOverride) => {
+        if (!activeSimId) {
+            addLocalEvent('warning', 'NO_ACTIVE_SIMULATION', 'Start a simulation before configuring a drone.');
+            return false;
+        }
+        return sendJson({
+            type: 'configure_drone',
+            simId: activeSimId,
+            payload: { droneId, config }
+        });
     }, [activeSimId, addLocalEvent, sendJson]);
 
     useEffect(() => {
@@ -735,6 +752,7 @@ export function useSimulationSocket() {
         submitOrderBatch,
         dispatchOrders,
         requestWindShadow,
+        configureDrone,
         clearSessionVisuals
     };
 }

@@ -20,7 +20,8 @@ class MapCache:
 
 
 def default_maps_dir():
-    return Path(__file__).resolve().parent / "maps"
+    # This file lives at coreUAV/maps/cache.py, so its parent IS the maps dir.
+    return Path(__file__).resolve().parent
 
 
 def find_cache_dir(map_id="hanoi_my_dinh_me_tri_large", base_dir=None):

@@ -382,6 +382,23 @@ export type IncomingMessage = {
     path3d?: PlannedPath3DPoint[];
 };
 
+export type DroneConfigOverride = {
+    max_battery?: number;
+    discharge_rate_base?: number;
+    discharge_rate_climb?: number;
+    speed?: number;
+    battery_low_threshold?: number;
+    battery_safe_target?: number;
+    recharge_rate?: number;
+    max_altitude?: number;
+    min_altitude?: number;
+    normal_altitude?: number;
+    payload_weight?: number;
+    payload_penalty?: number;
+};
+
+export type DroneConfigsById = Record<string, DroneConfigOverride>;
+
 export const DEFAULT_LAYER_TOGGLES: LayerToggles = {
     buildings: true,
     buildingLabels: true,

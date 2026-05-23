@@ -2,3 +2,6 @@ summarize/
 info/
 logs/
 test-results/
+.claude/settings.local.json
+.vscode/
+.idea/

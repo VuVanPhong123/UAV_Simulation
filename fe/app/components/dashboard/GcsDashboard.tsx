@@ -21,6 +21,8 @@ import {
     type AsyncRequestStatus,
     type DeliveryOrder,
     type DraftOrder,
+    type DroneConfigOverride,
+    type DroneConfigsById,
     type DroneTelemetry,
     type DynamicNoFlyZone,
     type DynamicObstacle,
@@ -176,6 +178,9 @@ export default function GcsDashboard() {
     const [mapSelectorOpen, setMapSelectorOpen] = useState(false);
     const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
     const [importError, setImportError] = useState<string | null>(null);
+    const [droneConfigs, setDroneConfigs] = useState<DroneConfigsById>({});
+    const [droneConfigApplyStatus, setDroneConfigApplyStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+    const [droneConfigApplyMessage, setDroneConfigApplyMessage] = useState<string | null>(null);
     const lastMapErrorKeyRef = useRef<string | null>(null);
     const windShadowRequestedSimRef = useRef<string | null>(null);
     const selectedMapPreset = MAP_PRESET_OPTIONS.find(option => option.mapId === selectedMapId) ?? MAP_PRESET_OPTIONS[0];
@@ -450,15 +455,16 @@ export default function GcsDashboard() {
             return false;
         }
         const normalizedDroneCount = clampDroneCount(droneCount);
-        if (!socket.startSimulation({ mapId: DEFAULT_MAP_PRESET_ID, droneCount: normalizedDroneCount, orderBatch: validDraftOrders })) {
+        if (!socket.startSimulation({ mapId: DEFAULT_MAP_PRESET_ID, droneCount: normalizedDroneCount, orderBatch: validDraftOrders, droneConfigs })) {
             return false;
         }
         setDroneCount(normalizedDroneCount);
+        setDroneConfigs({});
         setDraftOrders([]);
         setTemporaryFeedback('success', 'Đã gửi yêu cầu bắt đầu mô phỏng.');
         addLocalEvent('info', 'ORDER_FIRST_START_REQUESTED', `Bắt đầu mô phỏng với ${validDraftOrders.length} đơn hàng.`);
         return true;
-    }, [addLocalEvent, canStartWithOrders, droneCount, setTemporaryFeedback, socket, startHint, validDraftOrders]);
+    }, [addLocalEvent, canStartWithOrders, droneConfigs, droneCount, setTemporaryFeedback, socket, startHint, validDraftOrders]);
 
     const handleDroneCountChange = useCallback((value: number) => {
         setDroneCount(clampDroneCount(value));
@@ -592,6 +598,35 @@ export default function GcsDashboard() {
             }, SUCCESS_CLEAR_MS);
         }, 600);
     }, [socket, weather]);
+
+    const handleApplyDroneConfig = useCallback((droneId: string, config: DroneConfigOverride) => {
+        if (socket.activeSimId) {
+            setDroneConfigApplyStatus('loading');
+            const sent = socket.configureDrone(droneId, config);
+            if (sent) {
+                window.setTimeout(() => {
+                    setDroneConfigApplyStatus('success');
+                    setDroneConfigApplyMessage(null);
+                    window.setTimeout(() => setDroneConfigApplyStatus('idle'), SUCCESS_CLEAR_MS);
+                }, 400);
+            } else {
+                setDroneConfigApplyStatus('error');
+                setDroneConfigApplyMessage('Failed to send drone config.');
+            }
+        } else {
+            setDroneConfigs(prev => ({ ...prev, [droneId]: { ...prev[droneId], ...config } }));
+            setDroneConfigApplyStatus('success');
+            window.setTimeout(() => setDroneConfigApplyStatus('idle'), SUCCESS_CLEAR_MS);
+        }
+    }, [socket]);
+
+    const handleClearDroneConfig = useCallback((droneId: string) => {
+        setDroneConfigs(prev => {
+            const next = { ...prev };
+            delete next[droneId];
+            return next;
+        });
+    }, []);
 
     return (
         <div className="flex h-screen flex-col bg-slate-100 font-sans text-slate-800">
@@ -772,6 +807,11 @@ export default function GcsDashboard() {
                     onImportJson={handleImportJson}
                     onDispatchOrders={handleDispatchOrders}
                     onSetMapInteractionMode={setMapInteractionMode}
+                    droneConfigs={droneConfigs}
+                    droneConfigApplyStatus={droneConfigApplyStatus}
+                    droneConfigApplyMessage={droneConfigApplyMessage}
+                    onApplyDroneConfig={handleApplyDroneConfig}
+                    onClearDroneConfig={handleClearDroneConfig}
                     collapsed={rightPanelCollapsed}
                     onToggleCollapsed={() => setRightPanelCollapsed(prev => !prev)}
                 />

@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 
-from statuses import MissionStatus, OrderStatus
+from models.statuses import MissionStatus, OrderStatus
 
 
 @dataclass
